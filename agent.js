@@ -2,10 +2,9 @@ import { TwitterApi } from 'twitter-api-v2';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import fs from 'fs';
-
 dotenv.config();
 
-// 🐦 Twitter client
+// 🐦 Configurar cliente de Twitter
 const client = new TwitterApi({
   appKey: process.env.TWITTER_APP_KEY,
   appSecret: process.env.TWITTER_APP_SECRET,
@@ -13,29 +12,24 @@ const client = new TwitterApi({
   accessSecret: process.env.TWITTER_ACCESS_SECRET,
 });
 
-// 💬 Load messages from JSON file
+// 🗂️ Leer todos los mensajes desde messages.json
 function loadMessages() {
-  try {
-    const raw = fs.readFileSync('./messages.json', 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error('❌ Error loading messages.json:', error.message);
-    return [];
-  }
+  const data = fs.readFileSync('./messages.json', 'utf8');
+  return JSON.parse(data);
 }
 
-// 🔄 Pick random message
-function getRandomMessage() {
+// 🎲 Escoger mensaje aleatorio de un bloque
+function getRandomMessage(group) {
   const messages = loadMessages();
-  const randomIndex = Math.floor(Math.random() * messages.length);
-  return `${messages[randomIndex]} • ${new Date().toISOString().slice(0,10)}`;
+  const list = messages[group] || [];
+  const index = Math.floor(Math.random() * list.length);
+  const message = list[index];
+  return `${message} • ${new Date().toISOString().slice(0, 10)}`;
 }
 
-// 🐤 Post to X
-async function postTweet() {
+// 🐤 Publicar tweet
+async function postTweet(text) {
   try {
-    const text = getRandomMessage();
     const { data } = await client.v2.tweet(text);
     console.log("✅ Tweet publicado:", `https://x.com/i/web/status/${data.id}`);
   } catch (error) {
@@ -43,28 +37,28 @@ async function postTweet() {
   }
 }
 
-// 🕒 Programar publicaciones automáticas
-// node-cron usa formato "minuto hora día_mes mes día_semana"
-// Ejemplo: "0 9 * * *" → a las 9:00 AM cada día
-
-// Publicar a las 9:00 AM (hora Bogotá)
+// 🕒 Schedulers — hora local Bogotá
+// 9:00 AM → morning
 cron.schedule('0 9 * * *', () => {
-    console.log('🕘 Publicando tweet de la mañana...');
-    postTweet();
-  }, { timezone: 'America/Bogota' });
-  
-  // Publicar a la 1:00 PM
-  cron.schedule('0 13 * * *', () => {
-    console.log('🕐 Publicando tweet del mediodía...');
-    postTweet();
-  }, { timezone: 'America/Bogota' });
-  
-  // Publicar a las 7:00 PM
-  cron.schedule('0 19 * * *', () => {
-    console.log('🕖 Publicando tweet de la tarde...');
-    postTweet();
-  }, { timezone: 'America/Bogota' });
-  
-  console.log('🤖 Agente activo. Publicará a las 9:00 AM, 1:00 PM y 7:00 PM (hora Bogotá)');
-// Optional: uncomment for manual test
-// postTweet();
+  console.log('🌅 Publicando mensaje de la mañana...');
+  postTweet(getRandomMessage('morning'));
+}, { timezone: 'America/Bogota' });
+
+// 1:00 PM → noon
+cron.schedule('0 13 * * *', () => {
+  console.log('☀️ Publicando mensaje del mediodía...');
+  postTweet(getRandomMessage('noon'));
+}, { timezone: 'America/Bogota' });
+
+// 7:00 PM → evening
+cron.schedule('0 19 * * *', () => {
+  console.log('🌙 Publicando mensaje de la noche...');
+  postTweet(getRandomMessage('evening'));
+}, { timezone: 'America/Bogota' });
+
+console.log('🤖 Agente activo. Publicará mensajes aleatorios a las 9 AM, 1 PM y 7 PM (hora Bogotá).');
+
+// 👉 Para probar manualmente (opcional):
+postTweet(getRandomMessage('morning'));
+postTweet(getRandomMessage('noon'));
+postTweet(getRandomMessage('evening'));
