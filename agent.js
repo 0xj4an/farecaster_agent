@@ -58,7 +58,7 @@ cron.schedule('0 19 * * *', () => {
 
 console.log('🤖 Agente activo. Publicará mensajes aleatorios a las 9 AM, 1 PM y 7 PM (hora Bogotá).');
 
-// 👉 Para probar manualmente (opcional):
-postTweet(getRandomMessage('morning'));
-postTweet(getRandomMessage('noon'));
-postTweet(getRandomMessage('evening'));
+// 👉 Para probar manualmente (opcional - descomentar para test):
+// postTweet(getRandomMessage('morning'));
+// postTweet(getRandomMessage('noon'));
+// postTweet(getRandomMessage('evening'));
