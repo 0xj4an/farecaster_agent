@@ -1,13 +1,14 @@
 # 🤖 X Agent
 
-An automated Twitter/X agent that posts random messages on a daily schedule. Built with Node.js, Twitter API v2, and node-cron.
+An automated Twitter/X agent that posts random motivational and community-focused messages throughout the day. Built with Node.js, Twitter API v2, and node-cron.
 
 ## 📋 Features
 
 - 🐦 **Automated Tweeting**: Posts random messages to X/Twitter automatically
-- ⏰ **Cron Scheduling**: Daily posts at 9:00 AM (America/Bogota timezone)
-- 🎲 **Random Messages**: Selects from a predefined collection of messages
+- ⏰ **Multiple Daily Posts**: Posts at 9:00 AM, 1:00 PM, and 7:00 PM (America/Bogota timezone)
+- 🎲 **Random Messages**: Selects from a curated collection of 100+ messages about ReFi, Celo, building, and community
 - 📅 **Date Stamping**: Each post includes the current date
+- 📝 **External Message Config**: Messages stored in `messages.json` for easy customization
 - 🔐 **Environment Variables**: Secure credential management with dotenv
 
 ## 🚀 Installation
@@ -60,13 +61,14 @@ npm start
 ```
 
 The agent will:
-- Run continuously and post at the scheduled time (9:00 AM daily)
+- Run continuously and post at scheduled times (9:00 AM, 1:00 PM, 7:00 PM daily)
 - Display a confirmation message when a tweet is posted
 - Show the tweet URL in the console
+- Keep running 24/7, posting automatically at the scheduled times
 
 ### Testing
 
-To test immediately (comment out line 52 in `agent.js`):
+To test immediately, uncomment line 64 in `agent.js`:
 ```javascript
 postTweet();
 ```
@@ -80,7 +82,8 @@ npm start
 
 ```
 x_agent/
-├── agent.js          # Main bot logic
+├── agent.js          # Main bot logic with scheduling
+├── messages.json     # Curated collection of 100+ messages
 ├── package.json      # Dependencies and scripts
 ├── .env             # Environment variables (create this)
 ├── .gitignore       # Git ignore file
@@ -96,25 +99,54 @@ x_agent/
 
 ## 📝 Customizing Messages
 
-Edit the `messages` array in `agent.js` to customize your random messages:
+The messages are now stored in `messages.json` for easy management. Edit this file to customize your random messages:
 
-```javascript
-const messages = [
+```json
+// messages.json
+export const messages = [
   "gm ☀️",
   "Shipping something cool today 🚀",
-  // Add your custom messages here
+  "Your custom message here 💚",
+  // Add more messages here
 ];
 ```
 
+The messages are organized by categories:
+- 🌅 **GM / Good Morning**: Greeting messages
+- 🚀 **Shipping / Building**: Development and coding vibes  
+- 🌱 **ReFi / Celo**: Regenerative finance and impact messages
+- 💻 **Builders / Tech**: Focus and productivity messages
+- ❤️ **Community / LatAm**: Community and regional content
+- 👀 **Misc / Humor**: General fun and relaxed messages
+
 ## 🕒 Scheduling
 
-The cron schedule is set to 9:00 AM America/Bogota timezone:
+The bot posts **3 times per day** at:
+- 🌅 **9:00 AM** - Morning greetings and energy
+- 🌞 **1:00 PM** - Midday motivation
+- 🌆 **7:00 PM** - Evening community vibes
+
+All times are in `America/Bogota` timezone. The schedules are configured in `agent.js`:
 
 ```javascript
+// 9:00 AM
 cron.schedule('0 9 * * *', () => { /* ... */ }, { timezone: 'America/Bogota' });
+
+// 1:00 PM  
+cron.schedule('0 13 * * *', () => { /* ... */ }, { timezone: 'America/Bogota' });
+
+// 7:00 PM
+cron.schedule('0 19 * * *', () => { /* ... */ }, { timezone: 'America/Bogota' });
 ```
 
-To change the schedule, modify the cron expression and timezone in `agent.js`.
+### Cron Format
+
+The format is: `minute hour day month day-of-week`
+- `'0 9 * * *'` = Every day at 9:00 AM
+- `'0 13 * * *'` = Every day at 1:00 PM
+- `'0 19 * * *'` = Every day at 7:00 PM
+
+To change the schedule or add more times, modify the cron expressions in `agent.js`.
 
 ## 📄 License
 
@@ -123,6 +155,20 @@ ISC
 ## 👤 Author
 
 0xj4an
+
+## 🚂 Railway Deployment
+
+This project is designed to run continuously on [Railway](https://railway.app/):
+
+1. Connect your GitHub repository to Railway
+2. Set the environment variables in Railway:
+   - `TWITTER_APP_KEY`
+   - `TWITTER_APP_SECRET`  
+   - `TWITTER_ACCESS_TOKEN`
+   - `TWITTER_ACCESS_SECRET`
+3. Railway will automatically deploy and keep the agent running 24/7
+
+The bot will run continuously, posting automatically at the scheduled times (9 AM, 1 PM, 7 PM Bogotá time).
 
 ---
 
