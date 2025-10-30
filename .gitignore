@@ -1,3 +1,10 @@
 .env
 .DS_Store
 node_modules/
+
+# Bot files
+tweet_history.json
+tweet_history_*.json
+tweets.log
+tweets_*.log
+interactions.json

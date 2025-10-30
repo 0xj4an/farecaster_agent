@@ -167,3 +167,71 @@ console.log('🤖 Agente activo. Publicará a las 9 AM / 1 PM / 7 PM y reiniciar
   
     console.log('✅ Test completo: se publicaron los tres tweets de prueba.');
   })();
+
+
+
+  // 🧩 AUTO-LIKE + RETWEET a cuentas aliadas
+const followedAccounts = [
+    { username: 'Celo_Col', userId: '1584012895125471232' },     // ✅ @celo_col
+    { username: 'refimed', userId: '1525503859107303424' },     // ✅ @refimed
+    { username: 'MedellinBlock', userId: '1590501436009238529' } // ✅ @medellinblock
+  ];
+  
+  const INTERACTIONS_PATH = './interactions.json';
+  
+  // 🧠 Cargar historial de interacciones (para no repetir)
+  function loadInteractions() {
+    try {
+      if (!fs.existsSync(INTERACTIONS_PATH)) return { liked: [], retweeted: [] };
+      return JSON.parse(fs.readFileSync(INTERACTIONS_PATH, 'utf8'));
+    } catch {
+      return { liked: [], retweeted: [] };
+    }
+  }
+  
+  // 💾 Guardar historial actualizado
+  function saveInteractions(data) {
+    fs.writeFileSync(INTERACTIONS_PATH, JSON.stringify(data, null, 2), 'utf8');
+  }
+  
+  // 💚 Dar like + RT a tweets nuevos
+  async function engageWithCommunityTweets() {
+    const interactions = loadInteractions();
+  
+    for (const account of followedAccounts) {
+      try {
+        const timeline = await client.v2.userTimeline(account.userId, { max_results: 5 });
+        if (!timeline.data?.data) continue;
+  
+        for (const tweet of timeline.data.data) {
+          const alreadyLiked = interactions.liked.includes(tweet.id);
+          const alreadyRT = interactions.retweeted.includes(tweet.id);
+  
+          if (!alreadyLiked) {
+            await client.v2.like(process.env.TWITTER_USER_ID, tweet.id);
+            console.log(`💛 Like a tweet de @${account.username}: ${tweet.id}`);
+            interactions.liked.unshift(tweet.id);
+          }
+  
+          if (!alreadyRT) {
+            await client.v2.retweet(process.env.TWITTER_USER_ID, tweet.id);
+            console.log(`🔁 Retweet de @${account.username}: ${tweet.id}`);
+            interactions.retweeted.unshift(tweet.id);
+          }
+        }
+      } catch (err) {
+        console.error(`⚠️ Error interactuando con @${account.username}:`, err?.data ?? err);
+      }
+    }
+  
+    // Guardar los últimos 100 registros
+    interactions.liked = interactions.liked.slice(0, 100);
+    interactions.retweeted = interactions.retweeted.slice(0, 100);
+    saveInteractions(interactions);
+  }
+  
+  // 🕒 Ejecutar cada hora (America/Bogota)
+  cron.schedule('0 * * * *', () => {
+    console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
+    engageWithCommunityTweets();
+  }, { timezone: 'America/Bogota' });
