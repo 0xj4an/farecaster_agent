@@ -194,33 +194,51 @@ const followedAccounts = [
     fs.writeFileSync(INTERACTIONS_PATH, JSON.stringify(data, null, 2), 'utf8');
   }
   
+  // ⏱️ Función para esperar (delay)
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
   // 💚 Dar like + RT a tweets nuevos
   async function engageWithCommunityTweets() {
     const interactions = loadInteractions();
-  
+
     for (const account of followedAccounts) {
       try {
-        const timeline = await client.v2.userTimeline(account.userId, { max_results: 5 });
+        const timeline = await client.v2.userTimeline(account.userId, { max_results: 3 }); // Reducido de 5 a 3
         if (!timeline.data?.data) continue;
-  
+
         for (const tweet of timeline.data.data) {
           const alreadyLiked = interactions.liked.includes(tweet.id);
           const alreadyRT = interactions.retweeted.includes(tweet.id);
-  
+
           if (!alreadyLiked) {
             await client.v2.like(process.env.TWITTER_USER_ID, tweet.id);
             console.log(`💛 Like a tweet de @${account.username}: ${tweet.id}`);
             interactions.liked.unshift(tweet.id);
+            await wait(2000); // Esperar 2 segundos entre likes
           }
-  
+
           if (!alreadyRT) {
             await client.v2.retweet(process.env.TWITTER_USER_ID, tweet.id);
             console.log(`🔁 Retweet de @${account.username}: ${tweet.id}`);
             interactions.retweeted.unshift(tweet.id);
+            await wait(2000); // Esperar 2 segundos entre retweets
           }
         }
+
+        // Esperar 3 segundos entre cuentas
+        await wait(3000);
+
       } catch (err) {
-        console.error(`⚠️ Error interactuando con @${account.username}:`, err?.data ?? err);
+        // Detectar rate limit y saltarlo sin error visible
+        if (err?.data?.status === 429) {
+          console.log(`⏸️ Rate limit alcanzado para @${account.username}, saltando...`);
+          continue;
+        }
+
+        // Solo mostrar error si NO es rate limit ni forbidden
+        if (err?.data?.status !== 403) {
+          console.error(`⚠️ Error interactuando con @${account.username}:`, err?.data ?? err);
+        }
       }
     }
   
@@ -230,8 +248,8 @@ const followedAccounts = [
     saveInteractions(interactions);
   }
   
-  // 🕒 Ejecutar cada hora (America/Bogota)
-  cron.schedule('0 * * * *', () => {
+  // 🕒 Ejecutar cada 4 horas (America/Bogota) - Reducido para evitar rate limits
+  cron.schedule('0 */4 * * *', () => {
     console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
     engageWithCommunityTweets();
   }, { timezone: 'America/Bogota' });
