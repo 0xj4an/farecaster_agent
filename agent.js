@@ -203,7 +203,7 @@ const followedAccounts = [
 
     for (const account of followedAccounts) {
       try {
-        const timeline = await client.v2.userTimeline(account.userId, { max_results: 3 }); // Reducido de 5 a 3
+        const timeline = await client.v2.userTimeline(account.userId, { max_results: 5 });
         if (!timeline.data?.data) continue;
 
         for (const tweet of timeline.data.data) {
