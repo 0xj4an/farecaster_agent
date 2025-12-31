@@ -119,25 +119,53 @@ function isLastDayOfMonth(date = new Date()) {
 
 // 🕒 Schedulers automáticos (hora local Bogotá)
 
-// 🌅 9:00 AM → mensajes "morning"
-cron.schedule('0 9 * * *', () => {
-  const msg = getRandomMessage('morning');
-  console.log('🌅 Publicando mensaje de la mañana...');
-  postTweet(msg, 'morning');
-}, { timezone: 'America/Bogota' });
+// 🎲 Variables para controlar el post aleatorio cada 24 horas
+let lastPostTime = null;
+const POST_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
 
-// ☀️ 1:00 PM → mensajes "noon"
-cron.schedule('0 13 * * *', () => {
-  const msg = getRandomMessage('noon');
-  console.log('☀️ Publicando mensaje del mediodía...');
-  postTweet(msg, 'noon');
-}, { timezone: 'America/Bogota' });
+// 🌈 Función para determinar el grupo de mensaje según la hora
+function getMessageGroupByHour(hour) {
+  if (hour >= 5 && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 18) return 'noon';
+  return 'evening';
+}
 
-// 🌙 7:00 PM → mensajes "evening"
-cron.schedule('0 19 * * *', () => {
-  const msg = getRandomMessage('evening');
-  console.log('🌙 Publicando mensaje de la noche...');
-  postTweet(msg, 'evening');
+// ⏰ Verificar si han pasado 24 horas desde el último post
+function canPostNow() {
+  if (lastPostTime === null) return true; // Primera vez
+  const now = Date.now();
+  const timeSinceLastPost = now - lastPostTime;
+  return timeSinceLastPost >= POST_INTERVAL_MS;
+}
+
+// 🎲 Generar un número aleatorio entre min y max (inclusivo)
+function getRandomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// 🕐 Ejecutar cada hora para verificar si pueden pasar 24h y postear aleatoriamente
+cron.schedule('0 * * * *', () => {
+  // Solo continuar si han pasado 24 horas
+  if (!canPostNow()) {
+    const hoursRemaining = Math.ceil((POST_INTERVAL_MS - (Date.now() - lastPostTime)) / (60 * 60 * 1000));
+    console.log(`⏳ Esperando... Faltan ~${hoursRemaining}h para poder postear de nuevo.`);
+    return;
+  }
+
+  // Decidir aleatoriamente si postear esta hora (probabilidad: ~1/8 para promediar ~3 posts/día)
+  const shouldPost = getRandomInt(1, 8) === 1;
+
+  if (shouldPost) {
+    const currentHour = new Date().getHours();
+    const group = getMessageGroupByHour(currentHour);
+    const msg = getRandomMessage(group);
+    console.log(`🎲 Publicando tweet aleatorio (${group}) después de 24h...`);
+    postTweet(msg, group);
+    lastPostTime = Date.now();
+    console.log(`✅ Post realizado. Próximo post disponible en 24 horas.`);
+  } else {
+    console.log(`🎯 24h cumplidas, pero esperando momento aleatorio para postear...`);
+  }
 }, { timezone: 'America/Bogota' });
 
 // 🕛 23:59 cada día → verificar si es último día del mes y vaciar si sí
@@ -150,23 +178,19 @@ cron.schedule('59 23 * * *', () => {
   }
 }, { timezone: 'America/Bogota' });
 
-console.log('🤖 Agente activo. Publicará a las 9 AM / 1 PM / 7 PM y reiniciará al final de cada mes (23:59 hora Bogotá).');
+console.log('🤖 Agente activo. Publicará 1 vez cada 24 horas a una hora aleatoria y reiniciará al final de cada mes (23:59 hora Bogotá).');
 
-// 🧪 Prueba manual — publica tres tweets (morning, noon y evening)
-(async () => {
-    console.log('🧪 Test manual: publicando tres tweets (morning, noon, evening)...');
-  
-    const msgMorning = getRandomMessage('morning');
-    await postTweet(msgMorning, 'morning');
-  
-    const msgNoon = getRandomMessage('noon');
-    await postTweet(msgNoon, 'noon');
-  
-    const msgEvening = getRandomMessage('evening');
-    await postTweet(msgEvening, 'evening');
-  
-    console.log('✅ Test completo: se publicaron los tres tweets de prueba.');
-  })();
+// 🧪 Prueba manual — descomentado para testing
+// (async () => {
+//     console.log('🧪 Test manual: publicando un tweet de prueba...');
+//
+//     const testHour = new Date().getHours();
+//     const testGroup = getMessageGroupByHour(testHour);
+//     const testMsg = getRandomMessage(testGroup);
+//     await postTweet(testMsg, testGroup);
+//
+//     console.log('✅ Test completo: tweet de prueba publicado.');
+//   })();
 
 
 
