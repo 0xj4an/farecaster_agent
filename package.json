@@ -4,12 +4,15 @@
   "type": "module",
   "main": "agent.js",
   "scripts": {
-    "start": "node agent.js"
+    "start": "node --no-warnings agent.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Twitter/X automation bot for ReFi and Celo community engagement",
   "dependencies": {
     "dotenv": "^17.2.3",
     "node-cron": "^4.2.1",
