@@ -1,18 +1,25 @@
-import { TwitterApi } from 'twitter-api-v2';
+import axios from 'axios';
 import cron from 'node-cron';
 import fs from 'fs';
 
-// 🐦 Configurar cliente de Twitter
-const client = new TwitterApi({
-  appKey: process.env.TWITTER_APP_KEY,
-  appSecret: process.env.TWITTER_APP_SECRET,
-  accessToken: process.env.TWITTER_ACCESS_TOKEN,
-  accessSecret: process.env.TWITTER_ACCESS_SECRET,
+// 🟣 Configurar cliente de Neynar (Farcaster API)
+const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
+// NOTE: This bot uses the env var name "FID" for the value sent as Neynar "signer_uuid".
+const FID = process.env.FID;
+const NEYNAR_BASE_URL = 'https://api.neynar.com/v2/farcaster';
+
+// Cliente axios configurado con headers de autenticación
+const neynarClient = axios.create({
+  baseURL: NEYNAR_BASE_URL,
+  headers: {
+    'api_key': NEYNAR_API_KEY,
+    'Content-Type': 'application/json'
+  }
 });
 
 // 📁 Rutas de archivos
-const HISTORY_PATH = './tweet_history.json';
-const LOG_PATH = './tweets.log';
+const HISTORY_PATH = './cast_history.json';
+const LOG_PATH = './casts.log';
 
 // 🗂️ Leer todos los mensajes desde messages.json
 function loadMessages() {
@@ -59,20 +66,25 @@ function getRandomMessage(group) {
 }
 
 // 🪶 Guardar registro local de publicaciones
-function logTweet(group, message) {
+function logCast(group, message) {
   const timestamp = new Date().toLocaleString('es-CO');
   const logLine = `[${timestamp}] (${group}) ${message}\n`;
   fs.appendFileSync(LOG_PATH, logLine, 'utf8');
 }
 
-// 🐤 Publicar tweet
-async function postTweet(text, group) {
+// 🟣 Publicar cast en Farcaster
+async function publishCast(text, group) {
   try {
-    const { data } = await client.v2.tweet(text);
-    console.log(`✅ Tweet publicado (${group}): https://x.com/i/web/status/${data.id}`);
-    logTweet(group, text);
+    const response = await neynarClient.post('/cast', {
+      signer_uuid: FID,
+      text: text
+    });
+
+    const castHash = response.data?.cast?.hash || 'unknown';
+    console.log(`✅ Cast publicado (${group}): https://warpcast.com/~/conversations/${castHash}`);
+    logCast(group, text);
   } catch (error) {
-    console.error('❌ Error al publicar:', error?.data ?? error);
+    console.error('❌ Error al publicar cast:', error?.response?.data ?? error.message);
   }
 }
 
@@ -86,7 +98,7 @@ function resetMonthlyHistory() {
 
     // Archivar historial
     if (fs.existsSync(HISTORY_PATH)) {
-      const archiveHistory = `./tweet_history_${tag}.json`;
+      const archiveHistory = `./cast_history_${tag}.json`;
       fs.renameSync(HISTORY_PATH, archiveHistory);
       console.log(`🗃️ Historial archivado: ${archiveHistory}`);
     }
@@ -97,7 +109,7 @@ function resetMonthlyHistory() {
 
     // Archivar log
     if (fs.existsSync(LOG_PATH)) {
-      const archiveLog = `./tweets_${tag}.log`;
+      const archiveLog = `./casts_${tag}.log`;
       fs.renameSync(LOG_PATH, archiveLog);
       console.log(`🗃️ Log archivado: ${archiveLog}`);
     }
@@ -157,10 +169,10 @@ cron.schedule('0 * * * *', () => {
     const currentHour = new Date().getHours();
     const group = getMessageGroupByHour(currentHour);
     const msg = getRandomMessage(group);
-    console.log(`🎲 Publicando tweet aleatorio (${group}) después de 24h...`);
-    postTweet(msg, group);
+    console.log(`🎲 Publicando cast aleatorio (${group}) después de 24h...`);
+    publishCast(msg, group);
     lastPostTime = Date.now();
-    console.log(`✅ Post realizado. Próximo post disponible en 24 horas.`);
+    console.log(`✅ Cast realizado. Próximo cast disponible en 24 horas.`);
   } else {
     console.log(`🎯 24h cumplidas, pero esperando momento aleatorio para postear...`);
   }
@@ -176,66 +188,49 @@ cron.schedule('59 23 * * *', () => {
   }
 }, { timezone: 'America/Bogota' });
 
-console.log('🤖 Agente activo.');
-console.log('📅 Posts: 1 vez cada 24 horas a una hora aleatoria');
+console.log('🤖 Agente de Farcaster activo.');
+console.log('📅 Casts: 1 vez cada 24 horas a una hora aleatoria');
 console.log('💚 Auto-engagement: 3 veces al día (9 AM, 3 PM, 9 PM) con cuentas rotativas');
 console.log('🗓️ Archivado: Fin de cada mes a las 23:59 (hora Bogotá)');
+console.log('🟣 Usando Neynar API para Warpcast/Farcaster');
 
 // 🧪 Prueba manual — descomentado para testing
 // (async () => {
-//     console.log('🧪 Test manual: publicando un tweet de prueba...');
+//     console.log('🧪 Test manual: publicando un cast de prueba...');
 //
 //     const testHour = new Date().getHours();
 //     const testGroup = getMessageGroupByHour(testHour);
 //     const testMsg = getRandomMessage(testGroup);
-//     await postTweet(testMsg, testGroup);
+//     await publishCast(testMsg, testGroup);
 //
-//     console.log('✅ Test completo: tweet de prueba publicado.');
+//     console.log('✅ Test completo: cast de prueba publicado.');
 //   })();
 
 
 
-  // 🧩 AUTO-LIKE + RETWEET a cuentas aliadas
+  // 🧩 AUTO-LIKE + RECAST a cuentas aliadas en Farcaster
+  // Nota: Necesitarás obtener los FIDs de estas cuentas desde Warpcast
 const followedAccounts = [
-    { username: 'Celo_Col', userId: '1584012895125471232' },     // ✅ @celo_col
-    { username: 'refimed', userId: '1525503859107303424' },     // ✅ @refimed
-    { username: 'MedellinBlock', userId: '1590501436009238529' } // ✅ @medellinblock
+    { username: 'celo-col', fid: 0 },        // TODO: Obtener FID real de @celo-col en Warpcast
+    { username: 'refimed', fid: 0 },         // TODO: Obtener FID real de @refimed en Warpcast
+    { username: 'medellinblock', fid: 0 }    // TODO: Obtener FID real de @medellinblock en Warpcast
   ];
 
   const INTERACTIONS_PATH = './interactions.json';
-  const SOCIAVAULT_API_URL = 'https://api.sociavault.com/v1/scrape/twitter/user-tweets';
 
-  // 🌐 Función para obtener tweets usando SociaVault API
-  async function getUserTweets(username) {
+  // 🌐 Función para obtener casts usando Neynar API (¡gratis!)
+  async function getUserCasts(fid) {
     try {
-      const apiKey = process.env.SOCIAVAULT_API_KEY?.trim();
-
-      if (!apiKey) {
-        throw new Error('SOCIAVAULT_API_KEY está vacío o no definido');
-      }
-
-      const response = await fetch(`${SOCIAVAULT_API_URL}?handle=${username}`, {
-        method: 'GET',
-        headers: {
-          'X-API-Key': apiKey
+      const response = await neynarClient.get('/feed/user/casts', {
+        params: {
+          fid: fid,
+          limit: 5  // Obtener los últimos 5 casts
         }
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`SociaVault API error: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-
-      const data = await response.json();
-
-      // SociaVault devuelve los tweets en data.data.tweets como objeto con keys numéricas
-      // Convertir objeto a array
-      const tweetsObj = data?.data?.tweets || {};
-      const tweetsArray = Object.values(tweetsObj);
-
-      return tweetsArray;
+      return response.data?.casts || [];
     } catch (err) {
-      console.error(`⚠️ Error obteniendo tweets de @${username}:`, err.message);
+      console.error(`⚠️ Error obteniendo casts del FID ${fid}:`, err.response?.data?.message || err.message);
       return [];
     }
   }
@@ -243,10 +238,10 @@ const followedAccounts = [
   // 🧠 Cargar historial de interacciones (para no repetir)
   function loadInteractions() {
     try {
-      if (!fs.existsSync(INTERACTIONS_PATH)) return { liked: [], retweeted: [] };
+      if (!fs.existsSync(INTERACTIONS_PATH)) return { liked: [], recasted: [] };
       return JSON.parse(fs.readFileSync(INTERACTIONS_PATH, 'utf8'));
     } catch {
-      return { liked: [], retweeted: [] };
+      return { liked: [], recasted: [] };
     }
   }
 
@@ -258,99 +253,97 @@ const followedAccounts = [
   // ⏱️ Función para esperar (delay)
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 💚 Dar like + RT a tweets nuevos de UNA cuenta específica
+  // 💚 Dar like + recast a casts nuevos de UNA cuenta específica
   async function engageWithAccount(account) {
     const interactions = loadInteractions();
 
     try {
-      // 🔍 Usar SociaVault API para obtener tweets
-      console.log(`🔍 Obteniendo tweets de @${account.username} con SociaVault API...`);
-      const tweets = await getUserTweets(account.username);
+      // 🔍 Usar Neynar API para obtener casts
+      console.log(`🔍 Obteniendo casts del FID ${account.fid} (@${account.username})...`);
+      const casts = await getUserCasts(account.fid);
 
-      if (tweets.length === 0) {
-        console.log(`ℹ️ No se encontraron tweets de @${account.username}`);
+      if (casts.length === 0) {
+        console.log(`ℹ️ No se encontraron casts de @${account.username}`);
         return;
       }
 
-      console.log(`✅ Encontrados ${tweets.length} tweets de @${account.username}`);
+      console.log(`✅ Encontrados ${casts.length} casts de @${account.username}`);
 
-      // Limitar a los primeros 5 tweets
-      const recentTweets = tweets.slice(0, 5);
-
-      // 💚 Interactuar con cada tweet usando la API oficial
+      // 💚 Interactuar con cada cast usando Neynar API
       let successCount = 0;
-      for (const tweet of recentTweets) {
-        // SociaVault devuelve el ID en rest_id o legacy.id_str
-        const tweetId = tweet.rest_id || tweet.legacy?.id_str;
+      for (const cast of casts) {
+        const castHash = cast.hash;
 
-        if (!tweetId) {
-          console.log(`⚠️ Tweet sin ID, saltando...`);
+        if (!castHash) {
+          console.log(`⚠️ Cast sin hash, saltando...`);
           continue;
         }
 
-        const alreadyLiked = interactions.liked.includes(tweetId);
-        const alreadyRT = interactions.retweeted.includes(tweetId);
+        const alreadyLiked = interactions.liked.includes(castHash);
+        const alreadyRecasted = interactions.recasted.includes(castHash);
 
-        // Si ya interactuamos con este tweet, saltarlo
-        if (alreadyLiked && alreadyRT) {
+        // Si ya interactuamos con este cast, saltarlo
+        if (alreadyLiked && alreadyRecasted) {
           continue;
         }
 
+        // 💛 Dar like (reaction)
         if (!alreadyLiked) {
           try {
-            await client.v2.like(process.env.TWITTER_USER_ID, tweetId);
-            console.log(`💛 Like a tweet de @${account.username}: ${tweetId}`);
-            interactions.liked.unshift(tweetId);
+            await neynarClient.post('/reaction', {
+              signer_uuid: FID,
+              reaction_type: 'like',
+              target: castHash
+            });
+            console.log(`💛 Like a cast de @${account.username}: ${castHash.substring(0, 10)}...`);
+            interactions.liked.unshift(castHash);
             successCount++;
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
-            const status = err?.data?.status;
-            const errorDetail = err?.data?.detail || err?.data?.title || '';
+            const errorMsg = err.response?.data?.message || err.message;
 
-            // Marcar como procesado si ya fue liked o si no tenemos permisos
-            if (status === 403 || errorDetail.includes('already liked')) {
-              interactions.liked.unshift(tweetId);
-              if (status === 403 && !errorDetail.includes('already liked')) {
-                console.log(`⚠️ Sin permisos para dar like (403) - Cuenta marcada como procesada`);
-              }
-            } else if (status === 429) {
+            // Marcar como procesado si ya fue liked
+            if (errorMsg.includes('already') || errorMsg.includes('duplicate')) {
+              interactions.liked.unshift(castHash);
+              console.log(`⚠️ Ya se había dado like - Marcado como procesado`);
+            } else if (err.response?.status === 429) {
               console.log(`⚠️ Rate limit alcanzado, esperando 60 segundos...`);
               await wait(60000);
             } else {
-              console.log(`⚠️ Error dando like (${status}): ${err.message}`);
+              console.log(`⚠️ Error dando like: ${errorMsg}`);
             }
           }
         }
 
-        if (!alreadyRT) {
+        // 🔁 Recast (quote cast con texto vacío)
+        if (!alreadyRecasted) {
           try {
-            await client.v2.retweet(process.env.TWITTER_USER_ID, tweetId);
-            console.log(`🔁 Retweet de @${account.username}: ${tweetId}`);
-            interactions.retweeted.unshift(tweetId);
+            await neynarClient.post('/cast', {
+              signer_uuid: FID,
+              text: '',
+              embeds: [{ cast_id: { hash: castHash, fid: account.fid } }]
+            });
+            console.log(`🔁 Recast de @${account.username}: ${castHash.substring(0, 10)}...`);
+            interactions.recasted.unshift(castHash);
             successCount++;
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
-            const status = err?.data?.status;
-            const errorDetail = err?.data?.detail || '';
+            const errorMsg = err.response?.data?.message || err.message;
 
-            // Marcar como procesado en varios casos
-            if (status === 403 || status === 400 || errorDetail.includes('already retweeted') || errorDetail.includes('already Retweeted')) {
-              interactions.retweeted.unshift(tweetId);
-              if (status === 400) {
-                console.log(`⚠️ Tweet ya fue retweeteado (400) - Marcado como procesado`);
-              } else if (status === 403) {
-                console.log(`⚠️ Sin permisos para RT o ya procesado (403) - Marcado como procesado`);
-              }
-            } else if (status === 429) {
+            // Marcar como procesado si ya fue recasteado
+            if (errorMsg.includes('already') || errorMsg.includes('duplicate')) {
+              interactions.recasted.unshift(castHash);
+              console.log(`⚠️ Ya se había hecho recast - Marcado como procesado`);
+            } else if (err.response?.status === 429) {
               console.log(`⚠️ Rate limit alcanzado, deteniendo engagement...`);
               break; // Salir del loop si hay rate limit
             } else {
-              console.log(`⚠️ Error haciendo RT (${status}): ${err.message}`);
+              console.log(`⚠️ Error haciendo recast: ${errorMsg}`);
             }
           }
         }
 
-        // Limitar a máximo 3 interacciones exitosas por sesión para evitar rate limits
+        // Limitar a máximo 3 interacciones exitosas por sesión
         if (successCount >= 3) {
           console.log(`✅ Límite de 3 interacciones alcanzado, finalizando...`);
           break;
@@ -361,11 +354,11 @@ const followedAccounts = [
 
       // Guardar los últimos 100 registros
       interactions.liked = interactions.liked.slice(0, 100);
-      interactions.retweeted = interactions.retweeted.slice(0, 100);
+      interactions.recasted = interactions.recasted.slice(0, 100);
       saveInteractions(interactions);
 
     } catch (err) {
-      console.error(`⚠️ Error procesando @${account.username}:`, err.message);
+      console.error(`⚠️ Error procesando @${account.username}:`, err.response?.data?.message || err.message);
     }
   }
 
@@ -377,46 +370,45 @@ const followedAccounts = [
   
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
   cron.schedule('0 9 * * *', () => {
-    if (process.env.SOCIAVAULT_API_KEY) {
+    if (NEYNAR_API_KEY && FID) {
       const account = getRandomAccount();
       console.log(`🌅 Auto-engagement matutino con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // ☀️ Tarde (3:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 15 * * *', () => {
-    if (process.env.SOCIAVAULT_API_KEY) {
+    if (NEYNAR_API_KEY && FID) {
       const account = getRandomAccount();
       console.log(`☀️ Auto-engagement vespertino con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // 🌙 Noche (9:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 21 * * *', () => {
-    if (process.env.SOCIAVAULT_API_KEY) {
+    if (NEYNAR_API_KEY && FID) {
       const account = getRandomAccount();
       console.log(`🌙 Auto-engagement nocturno con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
-  // Descomentado solo si SOCIAVAULT_API_KEY está configurado
-  if (process.env.SOCIAVAULT_API_KEY) {
+  if (NEYNAR_API_KEY && FID) {
     const account = getRandomAccount();
     console.log(`🚀 Ejecutando auto-engagement inicial con @${account.username}...`);
     engageWithAccount(account).catch(err => {
       console.error('⚠️ Error en auto-engagement inicial:', err.message);
     });
   } else {
-    console.log('⚠️ SOCIAVAULT_API_KEY no configurado. Auto-engagement deshabilitado.');
-    console.log('ℹ️ Para habilitar auto-engagement, añade SOCIAVAULT_API_KEY a las variables de entorno.');
+    console.log('⚠️ NEYNAR_API_KEY o FID no configurado. Auto-engagement deshabilitado.');
+    console.log('ℹ️ Para habilitar auto-engagement, añade NEYNAR_API_KEY y FID a las variables de entorno.');
   }

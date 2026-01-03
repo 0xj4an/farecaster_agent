@@ -1,5 +1,5 @@
 {
-  "name": "x_agent",
+  "name": "fc_agent",
   "version": "1.0.0",
   "type": "module",
   "main": "agent.js",
@@ -12,9 +12,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Twitter/X automation bot for ReFi and Celo community engagement",
+  "description": "Farcaster/Warpcast automation bot for ReFi and Celo community engagement",
   "dependencies": {
-    "node-cron": "^4.2.1",
-    "twitter-api-v2": "^1.27.0"
+    "axios": "^1.6.0",
+    "node-cron": "^4.2.1"
   }
 }
