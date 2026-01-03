@@ -1,5 +1,4 @@
 import { TwitterApi } from 'twitter-api-v2';
-import { Scraper } from '@the-convocation/twitter-scraper';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import fs from 'fs';
@@ -203,26 +202,31 @@ const followedAccounts = [
   ];
 
   const INTERACTIONS_PATH = './interactions.json';
+  const SOCIAVAULT_API_URL = 'https://api.sociavault.com/v1/scrape/twitter/user-tweets';
 
-  // 🌐 Inicializar scraper para obtener tweets
-  const scraper = new Scraper();
-  let scraperLoggedIn = false;
-
-  // 🔐 Login del scraper (solo una vez)
-  async function loginScraper() {
-    if (scraperLoggedIn) return true;
-
+  // 🌐 Función para obtener tweets usando SociaVault API
+  async function getUserTweets(username) {
     try {
-      await scraper.login(
-        process.env.SCRAPER_USERNAME,
-        process.env.SCRAPER_PASSWORD
-      );
-      scraperLoggedIn = true;
-      console.log('✅ Scraper autenticado correctamente');
-      return true;
+      const response = await fetch(`${SOCIAVAULT_API_URL}?username=${username}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${process.env.SOCIAVAULT_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`SociaVault API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // SociaVault devuelve los tweets en data.tweets (formato puede variar)
+      // Ajustar según la respuesta real de la API
+      return data.tweets || data.data || [];
     } catch (err) {
-      console.error('❌ Error al autenticar scraper:', err.message);
-      return false;
+      console.error(`⚠️ Error obteniendo tweets de @${username}:`, err.message);
+      return [];
     }
   }
 
@@ -244,28 +248,15 @@ const followedAccounts = [
   // ⏱️ Función para esperar (delay)
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 💚 Dar like + RT a tweets nuevos (usando scraper para obtener + API para interactuar)
+  // 💚 Dar like + RT a tweets nuevos (usando SociaVault API para obtener + API oficial para interactuar)
   async function engageWithCommunityTweets() {
-    // Asegurar que el scraper esté autenticado
-    const isLoggedIn = await loginScraper();
-    if (!isLoggedIn) {
-      console.log('⚠️ No se puede ejecutar auto-engagement: scraper no autenticado');
-      return;
-    }
-
     const interactions = loadInteractions();
 
     for (const account of followedAccounts) {
       try {
-        // 🔍 Usar scraper para obtener tweets recientes (FREE!)
-        console.log(`🔍 Obteniendo tweets de @${account.username} con scraper...`);
-        const tweets = [];
-        const tweetIterator = scraper.getTweets(account.username, 5);
-
-        for await (const tweet of tweetIterator) {
-          tweets.push(tweet);
-          if (tweets.length >= 5) break;
-        }
+        // 🔍 Usar SociaVault API para obtener tweets recientes
+        console.log(`🔍 Obteniendo tweets de @${account.username} con SociaVault API...`);
+        const tweets = await getUserTweets(account.username);
 
         if (tweets.length === 0) {
           console.log(`ℹ️ No se encontraron tweets de @${account.username}`);
@@ -274,9 +265,19 @@ const followedAccounts = [
 
         console.log(`✅ Encontrados ${tweets.length} tweets de @${account.username}`);
 
+        // Limitar a los primeros 5 tweets
+        const recentTweets = tweets.slice(0, 5);
+
         // 💚 Interactuar con cada tweet usando la API oficial
-        for (const tweet of tweets) {
-          const tweetId = tweet.id;
+        for (const tweet of recentTweets) {
+          // El formato del ID puede variar, ajustar según respuesta de SociaVault
+          const tweetId = tweet.id || tweet.tweet_id || tweet.id_str;
+
+          if (!tweetId) {
+            console.log(`⚠️ Tweet sin ID, saltando...`);
+            continue;
+          }
+
           const alreadyLiked = interactions.liked.includes(tweetId);
           const alreadyRT = interactions.retweeted.includes(tweetId);
 
@@ -328,7 +329,7 @@ const followedAccounts = [
   }, { timezone: 'America/Bogota' });
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
-  console.log('🚀 Ejecutando auto-engagement inicial...');
+  console.log('🚀 Ejecutando auto-engagement inicial con SociaVault API...');
   engageWithCommunityTweets().catch(err => {
     console.error('⚠️ Error en auto-engagement inicial:', err.message);
   });

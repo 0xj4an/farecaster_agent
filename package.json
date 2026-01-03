@@ -14,7 +14,6 @@
   "license": "ISC",
   "description": "Twitter/X automation bot for ReFi and Celo community engagement",
   "dependencies": {
-    "@the-convocation/twitter-scraper": "^0.21.1",
     "dotenv": "^17.2.3",
     "node-cron": "^4.2.1",
     "twitter-api-v2": "^1.27.0"
