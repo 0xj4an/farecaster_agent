@@ -37,6 +37,11 @@ Create a `.env` file (or set these in Railway):
 NEYNAR_API_KEY=your_neynar_api_key_here
 FID=your_fid_here
 SIGNER_UUID=your_signer_uuid_here
+
+# Optional: startup test post (recommended for deploy validation)
+STARTUP_TEST_POST=1
+# Optional: ignore 24h gate and force a startup post
+# FORCE_STARTUP_TEST_POST=0
 ```
 
 1. **Update followed accounts with real FIDs**:
@@ -73,6 +78,8 @@ Visit their Warpcast profile and check the URL or use tools like [fid.info](http
 | `NEYNAR_API_KEY` | Your Neynar API Key from dashboard |
 | `FID` | Your Farcaster numeric FID (optional; used for logging) |
 | `SIGNER_UUID` | Required for writes (casts/likes/recasts). Must be a UUID signer from Neynar. |
+| `STARTUP_TEST_POST` | Optional. If `1`, posts one cast on startup (respects 24h gate). |
+| `FORCE_STARTUP_TEST_POST` | Optional. If `1`, forces a startup cast even if last cast was <24h ago. |
 
 ## 📖 Usage
 

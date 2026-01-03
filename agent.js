@@ -27,6 +27,20 @@ function normalizeCastHash(hash) {
   return null;
 }
 
+function parseEnvInt(name, defaultValue) {
+  const raw = process.env[name];
+  if (raw === undefined) return defaultValue;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : defaultValue;
+}
+
+// Engagement tuning
+const LOOKBACK_DAYS = parseEnvInt('LOOKBACK_DAYS', 30); // last N days to consider for engagement
+const MAX_ACTIONS_PER_RUN = parseEnvInt('MAX_ACTIONS_PER_RUN', 0); // 0 = unlimited
+const MAX_CASTS_PER_ACCOUNT = parseEnvInt('MAX_CASTS_PER_ACCOUNT', 200);
+const CASTS_PAGE_SIZE = parseEnvInt('CASTS_PAGE_SIZE', 50);
+const ACTION_DELAY_MS = parseEnvInt('ACTION_DELAY_MS', 3000);
+
 // Cliente axios configurado con headers de autenticación
 const neynarClient = axios.create({
   baseURL: NEYNAR_BASE_URL,
@@ -39,6 +53,21 @@ const neynarClient = axios.create({
 // 📁 Rutas de archivos
 const HISTORY_PATH = './cast_history.json';
 const LOG_PATH = './casts.log';
+const STATE_PATH = './state.json';
+
+function loadState() {
+  try {
+    if (!fs.existsSync(STATE_PATH)) return { last_post_ms: null };
+    const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
+    return { last_post_ms: data?.last_post_ms ?? null };
+  } catch {
+    return { last_post_ms: null };
+  }
+}
+
+function saveState(state) {
+  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf8');
+}
 
 // 🗂️ Leer todos los mensajes desde messages.json
 function loadMessages() {
@@ -103,6 +132,11 @@ async function publishCast(text, group) {
     const castHash = response.data?.cast?.hash || 'unknown';
     console.log(`✅ Cast publicado (${group}): https://warpcast.com/~/conversations/${castHash}`);
     logCast(group, text);
+
+    // Persist last post time to avoid re-posting on restarts/deploys
+    const state = loadState();
+    state.last_post_ms = Date.now();
+    saveState(state);
   } catch (error) {
     console.error('❌ Error al publicar cast:', error?.response?.data ?? error.message);
   }
@@ -150,7 +184,8 @@ function isLastDayOfMonth(date = new Date()) {
 // 🕒 Schedulers automáticos (hora local Bogotá)
 
 // 🎲 Variables para controlar el post aleatorio cada 24 horas
-let lastPostTime = null;
+const stateAtBoot = loadState();
+let lastPostTime = typeof stateAtBoot.last_post_ms === 'number' ? stateAtBoot.last_post_ms : null;
 const POST_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
 
 // 🌈 Función para determinar el grupo de mensaje según la hora
@@ -182,7 +217,7 @@ cron.schedule('0 * * * *', () => {
     return;
   }
 
-  // Decidir aleatoriamente si postear esta hora (probabilidad: ~1/8 para promediar ~3 posts/día)
+  // Decidir aleatoriamente si postear esta hora (probabilidad: ~1/8 por hora después de 24h)
   const shouldPost = getRandomInt(1, 8) === 1;
 
   if (shouldPost) {
@@ -225,6 +260,25 @@ if (!SIGNER_UUID) {
   console.log('ℹ️ Configura SIGNER_UUID con el UUID de tu signer (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).');
 }
 
+// 🚀 Post de prueba al desplegar (opcional)
+const STARTUP_TEST_POST = (process.env.STARTUP_TEST_POST ?? '1') === '1';
+const FORCE_STARTUP_TEST_POST = process.env.FORCE_STARTUP_TEST_POST === '1';
+
+if (STARTUP_TEST_POST && CAN_USE_WRITES) {
+  const canPost = FORCE_STARTUP_TEST_POST || canPostNow();
+  if (canPost) {
+    const hour = new Date().getHours();
+    const group = getMessageGroupByHour(hour);
+    const msg = getRandomMessage(group);
+    console.log(`🚀 Startup post (${group}) para validar deploy...`);
+    publishCast(msg, group).then(() => {
+      lastPostTime = Date.now();
+    }).catch(() => {});
+  } else {
+    console.log('ℹ️ Startup post omitido: aún no han pasado 24h desde el último cast.');
+  }
+}
+
 // 🧪 Prueba manual — descomentado para testing
 // (async () => {
 //     console.log('🧪 Test manual: publicando un cast de prueba...');
@@ -250,21 +304,75 @@ const followedAccounts = [
 
   const INTERACTIONS_PATH = './interactions.json';
 
+function getCastTimestampMs(cast) {
+  const ts =
+    cast?.timestamp ??
+    cast?.created_at ??
+    cast?.createdAt ??
+    cast?.published_at ??
+    cast?.publishedAt;
+
+  if (typeof ts === 'number') {
+    // seconds vs ms heuristic
+    return ts > 1e12 ? ts : ts * 1000;
+  }
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
   // 🌐 Función para obtener casts usando Neynar API (¡gratis!)
-  async function getUserCasts(fid) {
+  async function getUserCastsPage(fid, cursor) {
     try {
       const response = await neynarClient.get('/feed/user/casts', {
         params: {
           fid: fid,
-          limit: 5  // Obtener los últimos 5 casts
+          limit: CASTS_PAGE_SIZE,
+          ...(cursor ? { cursor } : {})
         }
       });
 
-      return response.data?.casts || [];
+      const casts = response.data?.casts || [];
+      const nextCursor =
+        response.data?.next?.cursor ??
+        response.data?.next_cursor ??
+        response.data?.cursor ??
+        null;
+
+      return { casts, nextCursor };
     } catch (err) {
       console.error(`⚠️ Error obteniendo casts del FID ${fid}:`, err.response?.data?.message || err.message);
-      return [];
+      return { casts: [], nextCursor: null };
     }
+  }
+
+  async function getUserCastsSince(fid, cutoffMs) {
+    const all = [];
+    let cursor = null;
+    let keepGoing = true;
+
+    while (keepGoing && all.length < MAX_CASTS_PER_ACCOUNT) {
+      const { casts, nextCursor } = await getUserCastsPage(fid, cursor);
+      if (!casts.length) break;
+
+      for (const cast of casts) {
+        const ts = getCastTimestampMs(cast);
+        if (ts !== null && ts < cutoffMs) {
+          keepGoing = false;
+          break;
+        }
+        all.push(cast);
+        if (all.length >= MAX_CASTS_PER_ACCOUNT) break;
+      }
+
+      if (!keepGoing) break;
+      if (!nextCursor) break;
+      cursor = nextCursor;
+    }
+
+    return all;
   }
 
   // 🧠 Cargar historial de interacciones (para no repetir)
@@ -288,11 +396,13 @@ const followedAccounts = [
   // 💚 Dar like + recast a casts nuevos de UNA cuenta específica
   async function engageWithAccount(account) {
     const interactions = loadInteractions();
+    const cutoffMs = Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+    const maxActions = MAX_ACTIONS_PER_RUN > 0 ? MAX_ACTIONS_PER_RUN : Number.POSITIVE_INFINITY;
 
     try {
       // 🔍 Usar Neynar API para obtener casts
       console.log(`🔍 Obteniendo casts del FID ${account.fid} (@${account.username})...`);
-      const casts = await getUserCasts(account.fid);
+      const casts = await getUserCastsSince(account.fid, cutoffMs);
 
       if (casts.length === 0) {
         console.log(`ℹ️ No se encontraron casts de @${account.username}`);
@@ -334,7 +444,11 @@ const followedAccounts = [
             console.log(`💛 Like a cast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.liked.unshift(castHash);
             successCount++;
-            await wait(3000); // Esperar 3 segundos entre acciones
+            if (successCount >= maxActions) {
+              console.log(`✅ Límite de ${maxActions} acciones alcanzado, finalizando...`);
+              break;
+            }
+            await wait(ACTION_DELAY_MS);
           } catch (err) {
             const errorMsg = err.response?.data?.message || err.message;
 
@@ -374,7 +488,11 @@ const followedAccounts = [
             console.log(`🔁 Recast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.recasted.unshift(castHash);
             successCount++;
-            await wait(3000); // Esperar 3 segundos entre acciones
+            if (successCount >= maxActions) {
+              console.log(`✅ Límite de ${maxActions} acciones alcanzado, finalizando...`);
+              break;
+            }
+            await wait(ACTION_DELAY_MS);
           } catch (err) {
             const errorMsg = err.response?.data?.message || err.message;
 
@@ -399,12 +517,6 @@ const followedAccounts = [
             }
           }
         }
-
-        // Limitar a máximo 3 interacciones exitosas por sesión
-        if (successCount >= 3) {
-          console.log(`✅ Límite de 3 interacciones alcanzado, finalizando...`);
-          break;
-        }
       }
 
       console.log(`📊 Engagement completado: ${successCount} interacciones exitosas`);
@@ -419,18 +531,28 @@ const followedAccounts = [
     }
   }
 
-  // 🎲 Seleccionar cuenta aleatoria para revisar
-  function getRandomAccount() {
-    const randomIndex = Math.floor(Math.random() * followedAccounts.length);
-    return followedAccounts[randomIndex];
+  let engagementInProgress = false;
+
+  async function engageAllAccounts(label) {
+    if (engagementInProgress) {
+      console.log('⏳ Engagement ya en progreso, saltando esta ejecución...');
+      return;
+    }
+    engagementInProgress = true;
+    try {
+      console.log(label);
+      for (const account of followedAccounts) {
+        await engageWithAccount(account);
+      }
+    } finally {
+      engagementInProgress = false;
+    }
   }
   
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
   cron.schedule('0 9 * * *', () => {
     if (NEYNAR_API_KEY) {
-      const account = getRandomAccount();
-      console.log(`🌅 Auto-engagement matutino con @${account.username}...`);
-      engageWithAccount(account);
+      engageAllAccounts('🌅 Auto-engagement matutino (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
@@ -439,9 +561,7 @@ const followedAccounts = [
   // ☀️ Tarde (3:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 15 * * *', () => {
     if (NEYNAR_API_KEY) {
-      const account = getRandomAccount();
-      console.log(`☀️ Auto-engagement vespertino con @${account.username}...`);
-      engageWithAccount(account);
+      engageAllAccounts('☀️ Auto-engagement vespertino (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
@@ -450,9 +570,7 @@ const followedAccounts = [
   // 🌙 Noche (9:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 21 * * *', () => {
     if (NEYNAR_API_KEY) {
-      const account = getRandomAccount();
-      console.log(`🌙 Auto-engagement nocturno con @${account.username}...`);
-      engageWithAccount(account);
+      engageAllAccounts('🌙 Auto-engagement nocturno (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
@@ -460,9 +578,7 @@ const followedAccounts = [
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
   if (NEYNAR_API_KEY) {
-    const account = getRandomAccount();
-    console.log(`🚀 Ejecutando auto-engagement inicial con @${account.username}...`);
-    engageWithAccount(account).catch(err => {
+    engageAllAccounts('🚀 Ejecutando auto-engagement inicial (sweep de cuentas)...').catch(err => {
       console.error('⚠️ Error en auto-engagement inicial:', err.message);
     });
   } else {

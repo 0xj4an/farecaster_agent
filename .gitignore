@@ -3,8 +3,9 @@
 node_modules/
 
 # Bot files
-tweet_history.json
-tweet_history_*.json
-tweets.log
-tweets_*.log
+cast_history.json
+cast_history_*.json
+casts.log
+casts_*.log
 interactions.json
+state.json
