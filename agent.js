@@ -47,6 +47,50 @@ const INSIGHTS_DAYS = parseEnvInt('INSIGHTS_DAYS', 1); // summarize last N days 
 const INSIGHTS_STORE_DAYS = parseEnvInt('INSIGHTS_STORE_DAYS', 30); // keep last N days in insights.json
 const INSIGHTS_POST_CRON = process.env.INSIGHTS_POST_CRON || '30 8 * * *'; // 8:30 AM Bogota
 
+const BOT_TIMEZONE = 'America/Bogota';
+
+function sanitizeCronExpr(expr) {
+  if (expr === undefined || expr === null) return '';
+  let s = String(expr).trim();
+  // Railway env vars are often set with quotes; strip them if present.
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function supportsTimeZone(tz) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const CRON_TIMEZONE = supportsTimeZone(BOT_TIMEZONE) ? BOT_TIMEZONE : undefined;
+if (!CRON_TIMEZONE) {
+  console.log(`⚠️ Timezone "${BOT_TIMEZONE}" no soportada en este runtime. Cron usará timezone local del sistema.`);
+}
+
+function safeSchedule(expr, fn) {
+  const cleaned = sanitizeCronExpr(expr);
+  if (!cleaned) {
+    console.log('⚠️ Cron inválido/vacío, saltando schedule.');
+    return null;
+  }
+  if (typeof cron.validate === 'function' && !cron.validate(cleaned)) {
+    console.log(`⚠️ Cron inválido: "${cleaned}". Revisa tu variable de entorno.`);
+    return null;
+  }
+  try {
+    return cron.schedule(cleaned, fn, CRON_TIMEZONE ? { timezone: CRON_TIMEZONE } : undefined);
+  } catch (err) {
+    console.error(`⚠️ Error programando cron "${cleaned}":`, err.message);
+    return null;
+  }
+}
+
 // Cliente axios configurado con headers de autenticación
 const neynarClient = axios.create({
   baseURL: NEYNAR_BASE_URL,
@@ -299,7 +343,7 @@ function getRandomInt(min, max) {
 }
 
 // 🕐 Ejecutar cada hora para verificar si pueden pasar 24h y postear aleatoriamente
-cron.schedule('0 * * * *', () => {
+safeSchedule('0 * * * *', () => {
   // Solo continuar si han pasado 24 horas
   if (!canPostNow()) {
     const hoursRemaining = Math.ceil((POST_INTERVAL_MS - (Date.now() - lastPostTime)) / (60 * 60 * 1000));
@@ -321,17 +365,17 @@ cron.schedule('0 * * * *', () => {
   } else {
     console.log(`🎯 24h cumplidas, pero esperando momento aleatorio para postear...`);
   }
-}, { timezone: 'America/Bogota' });
+});
 
 // 🕛 23:59 cada día → verificar si es último día del mes y vaciar si sí
-cron.schedule('59 23 * * *', () => {
+safeSchedule('59 23 * * *', () => {
   if (isLastDayOfMonth()) {
     console.log('🗓️ Último día del mes detectado — reiniciando historial y logs...');
     resetMonthlyHistory();
   } else {
     console.log('📅 No es el último día del mes, sin cambios.');
   }
-}, { timezone: 'America/Bogota' });
+});
 
 console.log('🤖 Agente de Farcaster activo.');
 console.log('📅 Casts: 1 vez cada 24 horas a una hora aleatoria');
@@ -505,13 +549,21 @@ function getCastTimestampMs(cast) {
   }
 
   function ymdBogota() {
-    // Stable daily key in Bogota time
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Bogota',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date());
+    // Stable daily key in Bogota time (fallback to local timezone if ICU/timezone data is missing)
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: BOT_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+    } catch {
+      return new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+    }
   }
 
   async function runDailyInsightsCast(accounts) {
@@ -721,38 +773,38 @@ function getCastTimestampMs(cast) {
   }
 
   // 🧠 Daily insights cast (topics mined from followed accounts)
-  cron.schedule(INSIGHTS_POST_CRON, () => {
+  safeSchedule(INSIGHTS_POST_CRON, () => {
     runDailyInsightsCast(followedAccounts).catch(err => {
       console.error('⚠️ Error generando daily insights cast:', err.response?.data?.message || err.message);
     });
-  }, { timezone: 'America/Bogota' });
+  });
   
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
-  cron.schedule('0 9 * * *', () => {
+  safeSchedule('0 9 * * *', () => {
     if (NEYNAR_API_KEY) {
       engageAllAccounts('🌅 Auto-engagement matutino (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
-  }, { timezone: 'America/Bogota' });
+  });
 
   // ☀️ Tarde (3:00 PM) - Revisar cuenta aleatoria
-  cron.schedule('0 15 * * *', () => {
+  safeSchedule('0 15 * * *', () => {
     if (NEYNAR_API_KEY) {
       engageAllAccounts('☀️ Auto-engagement vespertino (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
-  }, { timezone: 'America/Bogota' });
+  });
 
   // 🌙 Noche (9:00 PM) - Revisar cuenta aleatoria
-  cron.schedule('0 21 * * *', () => {
+  safeSchedule('0 21 * * *', () => {
     if (NEYNAR_API_KEY) {
       engageAllAccounts('🌙 Auto-engagement nocturno (sweep de cuentas)...');
     } else {
       console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
-  }, { timezone: 'America/Bogota' });
+  });
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
   if (NEYNAR_API_KEY) {
