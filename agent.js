@@ -305,9 +305,14 @@ const followedAccounts = [
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
             const status = err?.data?.status;
-            // Ignorar errores 403 (forbidden) y 139 (already liked)
-            if (status === 403 || err?.data?.title === 'You have already liked this Tweet.') {
-              interactions.liked.unshift(tweetId); // Marcar como procesado
+            const errorDetail = err?.data?.detail || err?.data?.title || '';
+
+            // Marcar como procesado si ya fue liked o si no tenemos permisos
+            if (status === 403 || errorDetail.includes('already liked')) {
+              interactions.liked.unshift(tweetId);
+              if (status === 403 && !errorDetail.includes('already liked')) {
+                console.log(`⚠️ Sin permisos para dar like (403) - Cuenta marcada como procesada`);
+              }
             } else if (status === 429) {
               console.log(`⚠️ Rate limit alcanzado, esperando 60 segundos...`);
               await wait(60000);
@@ -326,9 +331,16 @@ const followedAccounts = [
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
             const status = err?.data?.status;
-            // Ignorar errores de duplicados
-            if (status === 403 || err?.data?.detail?.includes('already retweeted')) {
-              interactions.retweeted.unshift(tweetId); // Marcar como procesado
+            const errorDetail = err?.data?.detail || '';
+
+            // Marcar como procesado en varios casos
+            if (status === 403 || status === 400 || errorDetail.includes('already retweeted') || errorDetail.includes('already Retweeted')) {
+              interactions.retweeted.unshift(tweetId);
+              if (status === 400) {
+                console.log(`⚠️ Tweet ya fue retweeteado (400) - Marcado como procesado`);
+              } else if (status === 403) {
+                console.log(`⚠️ Sin permisos para RT o ya procesado (403) - Marcado como procesado`);
+              }
             } else if (status === 429) {
               console.log(`⚠️ Rate limit alcanzado, deteniendo engagement...`);
               break; // Salir del loop si hay rate limit
