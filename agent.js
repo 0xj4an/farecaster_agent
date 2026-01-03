@@ -207,23 +207,23 @@ const followedAccounts = [
   // 🌐 Función para obtener tweets usando SociaVault API
   async function getUserTweets(username) {
     try {
-      const response = await fetch(`${SOCIAVAULT_API_URL}?username=${username}`, {
+      const response = await fetch(`${SOCIAVAULT_API_URL}?handle=${username}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${process.env.SOCIAVAULT_API_KEY}`,
-          'Content-Type': 'application/json'
+          'X-API-Key': process.env.SOCIAVAULT_API_KEY
         }
       });
 
       if (!response.ok) {
-        throw new Error(`SociaVault API error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        throw new Error(`SociaVault API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
 
-      // SociaVault devuelve los tweets en data.tweets (formato puede variar)
-      // Ajustar según la respuesta real de la API
-      return data.tweets || data.data || [];
+      // SociaVault devuelve los tweets en data.tweets
+      // Retorna los 100 tweets más populares del usuario
+      return data.tweets || [];
     } catch (err) {
       console.error(`⚠️ Error obteniendo tweets de @${username}:`, err.message);
       return [];
@@ -270,8 +270,8 @@ const followedAccounts = [
 
         // 💚 Interactuar con cada tweet usando la API oficial
         for (const tweet of recentTweets) {
-          // El formato del ID puede variar, ajustar según respuesta de SociaVault
-          const tweetId = tweet.id || tweet.tweet_id || tweet.id_str;
+          // SociaVault devuelve el ID en rest_id o legacy.id_str
+          const tweetId = tweet.rest_id || tweet.legacy?.id_str;
 
           if (!tweetId) {
             console.log(`⚠️ Tweet sin ID, saltando...`);
@@ -324,12 +324,22 @@ const followedAccounts = [
   
   // 🕒 Ejecutar cada 4 horas (America/Bogota) - Reducido para evitar rate limits
   cron.schedule('0 */4 * * *', () => {
-    console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
-    engageWithCommunityTweets();
+    if (process.env.SOCIAVAULT_API_KEY) {
+      console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
+      engageWithCommunityTweets();
+    } else {
+      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+    }
   }, { timezone: 'America/Bogota' });
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
-  console.log('🚀 Ejecutando auto-engagement inicial con SociaVault API...');
-  engageWithCommunityTweets().catch(err => {
-    console.error('⚠️ Error en auto-engagement inicial:', err.message);
-  });
+  // Descomentado solo si SOCIAVAULT_API_KEY está configurado
+  if (process.env.SOCIAVAULT_API_KEY) {
+    console.log('🚀 Ejecutando auto-engagement inicial con SociaVault API...');
+    engageWithCommunityTweets().catch(err => {
+      console.error('⚠️ Error en auto-engagement inicial:', err.message);
+    });
+  } else {
+    console.log('⚠️ SOCIAVAULT_API_KEY no configurado. Auto-engagement deshabilitado.');
+    console.log('ℹ️ Para habilitar auto-engagement, añade SOCIAVAULT_API_KEY a las variables de entorno.');
+  }
