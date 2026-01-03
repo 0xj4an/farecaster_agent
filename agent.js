@@ -208,10 +208,16 @@ const followedAccounts = [
   // 🌐 Función para obtener tweets usando SociaVault API
   async function getUserTweets(username) {
     try {
+      const apiKey = process.env.SOCIAVAULT_API_KEY?.trim();
+
+      if (!apiKey) {
+        throw new Error('SOCIAVAULT_API_KEY está vacío o no definido');
+      }
+
       const response = await fetch(`${SOCIAVAULT_API_URL}?handle=${username}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${process.env.SOCIAVAULT_API_KEY}`
+          'X-API-Key': apiKey
         }
       });
 
@@ -222,9 +228,12 @@ const followedAccounts = [
 
       const data = await response.json();
 
-      // SociaVault devuelve los tweets en data.tweets
-      // Retorna los 100 tweets más populares del usuario
-      return data.tweets || [];
+      // SociaVault devuelve los tweets en data.data.tweets como objeto con keys numéricas
+      // Convertir objeto a array
+      const tweetsObj = data?.data?.tweets || {};
+      const tweetsArray = Object.values(tweetsObj);
+
+      return tweetsArray;
     } catch (err) {
       console.error(`⚠️ Error obteniendo tweets de @${username}:`, err.message);
       return [];
