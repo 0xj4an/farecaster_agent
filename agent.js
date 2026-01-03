@@ -1,4 +1,5 @@
 import { TwitterApi } from 'twitter-api-v2';
+import { Scraper } from '@the-convocation/twitter-scraper';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import fs from 'fs';
@@ -200,9 +201,31 @@ const followedAccounts = [
     { username: 'refimed', userId: '1525503859107303424' },     // ✅ @refimed
     { username: 'MedellinBlock', userId: '1590501436009238529' } // ✅ @medellinblock
   ];
-  
+
   const INTERACTIONS_PATH = './interactions.json';
-  
+
+  // 🌐 Inicializar scraper para obtener tweets
+  const scraper = new Scraper();
+  let scraperLoggedIn = false;
+
+  // 🔐 Login del scraper (solo una vez)
+  async function loginScraper() {
+    if (scraperLoggedIn) return true;
+
+    try {
+      await scraper.login(
+        process.env.SCRAPER_USERNAME,
+        process.env.SCRAPER_PASSWORD
+      );
+      scraperLoggedIn = true;
+      console.log('✅ Scraper autenticado correctamente');
+      return true;
+    } catch (err) {
+      console.error('❌ Error al autenticar scraper:', err.message);
+      return false;
+    }
+  }
+
   // 🧠 Cargar historial de interacciones (para no repetir)
   function loadInteractions() {
     try {
@@ -212,40 +235,75 @@ const followedAccounts = [
       return { liked: [], retweeted: [] };
     }
   }
-  
+
   // 💾 Guardar historial actualizado
   function saveInteractions(data) {
     fs.writeFileSync(INTERACTIONS_PATH, JSON.stringify(data, null, 2), 'utf8');
   }
-  
+
   // ⏱️ Función para esperar (delay)
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 💚 Dar like + RT a tweets nuevos
+  // 💚 Dar like + RT a tweets nuevos (usando scraper para obtener + API para interactuar)
   async function engageWithCommunityTweets() {
+    // Asegurar que el scraper esté autenticado
+    const isLoggedIn = await loginScraper();
+    if (!isLoggedIn) {
+      console.log('⚠️ No se puede ejecutar auto-engagement: scraper no autenticado');
+      return;
+    }
+
     const interactions = loadInteractions();
 
     for (const account of followedAccounts) {
       try {
-        const timeline = await client.v2.userTimeline(account.userId, { max_results: 5 });
-        if (!timeline.data?.data) continue;
+        // 🔍 Usar scraper para obtener tweets recientes (FREE!)
+        console.log(`🔍 Obteniendo tweets de @${account.username} con scraper...`);
+        const tweets = [];
+        const tweetIterator = scraper.getTweets(account.username, 5);
 
-        for (const tweet of timeline.data.data) {
-          const alreadyLiked = interactions.liked.includes(tweet.id);
-          const alreadyRT = interactions.retweeted.includes(tweet.id);
+        for await (const tweet of tweetIterator) {
+          tweets.push(tweet);
+          if (tweets.length >= 5) break;
+        }
+
+        if (tweets.length === 0) {
+          console.log(`ℹ️ No se encontraron tweets de @${account.username}`);
+          continue;
+        }
+
+        console.log(`✅ Encontrados ${tweets.length} tweets de @${account.username}`);
+
+        // 💚 Interactuar con cada tweet usando la API oficial
+        for (const tweet of tweets) {
+          const tweetId = tweet.id;
+          const alreadyLiked = interactions.liked.includes(tweetId);
+          const alreadyRT = interactions.retweeted.includes(tweetId);
 
           if (!alreadyLiked) {
-            await client.v2.like(process.env.TWITTER_USER_ID, tweet.id);
-            console.log(`💛 Like a tweet de @${account.username}: ${tweet.id}`);
-            interactions.liked.unshift(tweet.id);
-            await wait(2000); // Esperar 2 segundos entre likes
+            try {
+              await client.v2.like(process.env.TWITTER_USER_ID, tweetId);
+              console.log(`💛 Like a tweet de @${account.username}: ${tweetId}`);
+              interactions.liked.unshift(tweetId);
+              await wait(2000); // Esperar 2 segundos entre likes
+            } catch (err) {
+              if (err?.data?.status !== 403) {
+                console.log(`⚠️ Error dando like: ${err.message}`);
+              }
+            }
           }
 
           if (!alreadyRT) {
-            await client.v2.retweet(process.env.TWITTER_USER_ID, tweet.id);
-            console.log(`🔁 Retweet de @${account.username}: ${tweet.id}`);
-            interactions.retweeted.unshift(tweet.id);
-            await wait(2000); // Esperar 2 segundos entre retweets
+            try {
+              await client.v2.retweet(process.env.TWITTER_USER_ID, tweetId);
+              console.log(`🔁 Retweet de @${account.username}: ${tweetId}`);
+              interactions.retweeted.unshift(tweetId);
+              await wait(2000); // Esperar 2 segundos entre retweets
+            } catch (err) {
+              if (err?.data?.status !== 403) {
+                console.log(`⚠️ Error haciendo RT: ${err.message}`);
+              }
+            }
           }
         }
 
@@ -253,16 +311,7 @@ const followedAccounts = [
         await wait(3000);
 
       } catch (err) {
-        // Detectar rate limit y saltarlo sin error visible
-        if (err?.data?.status === 429) {
-          console.log(`⏸️ Rate limit alcanzado para @${account.username}, saltando...`);
-          continue;
-        }
-
-        // Solo mostrar error si NO es rate limit ni forbidden
-        if (err?.data?.status !== 403) {
-          console.error(`⚠️ Error interactuando con @${account.username}:`, err?.data ?? err);
-        }
+        console.error(`⚠️ Error procesando @${account.username}:`, err.message);
       }
     }
   
