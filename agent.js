@@ -278,6 +278,7 @@ const followedAccounts = [
       const recentTweets = tweets.slice(0, 5);
 
       // 💚 Interactuar con cada tweet usando la API oficial
+      let successCount = 0;
       for (const tweet of recentTweets) {
         // SociaVault devuelve el ID en rest_id o legacy.id_str
         const tweetId = tweet.rest_id || tweet.legacy?.id_str;
@@ -290,15 +291,28 @@ const followedAccounts = [
         const alreadyLiked = interactions.liked.includes(tweetId);
         const alreadyRT = interactions.retweeted.includes(tweetId);
 
+        // Si ya interactuamos con este tweet, saltarlo
+        if (alreadyLiked && alreadyRT) {
+          continue;
+        }
+
         if (!alreadyLiked) {
           try {
             await client.v2.like(process.env.TWITTER_USER_ID, tweetId);
             console.log(`💛 Like a tweet de @${account.username}: ${tweetId}`);
             interactions.liked.unshift(tweetId);
-            await wait(2000); // Esperar 2 segundos entre likes
+            successCount++;
+            await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
-            if (err?.data?.status !== 403) {
-              console.log(`⚠️ Error dando like: ${err.message}`);
+            const status = err?.data?.status;
+            // Ignorar errores 403 (forbidden) y 139 (already liked)
+            if (status === 403 || err?.data?.title === 'You have already liked this Tweet.') {
+              interactions.liked.unshift(tweetId); // Marcar como procesado
+            } else if (status === 429) {
+              console.log(`⚠️ Rate limit alcanzado, esperando 60 segundos...`);
+              await wait(60000);
+            } else {
+              console.log(`⚠️ Error dando like (${status}): ${err.message}`);
             }
           }
         }
@@ -308,14 +322,30 @@ const followedAccounts = [
             await client.v2.retweet(process.env.TWITTER_USER_ID, tweetId);
             console.log(`🔁 Retweet de @${account.username}: ${tweetId}`);
             interactions.retweeted.unshift(tweetId);
-            await wait(2000); // Esperar 2 segundos entre retweets
+            successCount++;
+            await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
-            if (err?.data?.status !== 403) {
-              console.log(`⚠️ Error haciendo RT: ${err.message}`);
+            const status = err?.data?.status;
+            // Ignorar errores de duplicados
+            if (status === 403 || err?.data?.detail?.includes('already retweeted')) {
+              interactions.retweeted.unshift(tweetId); // Marcar como procesado
+            } else if (status === 429) {
+              console.log(`⚠️ Rate limit alcanzado, deteniendo engagement...`);
+              break; // Salir del loop si hay rate limit
+            } else {
+              console.log(`⚠️ Error haciendo RT (${status}): ${err.message}`);
             }
           }
         }
+
+        // Limitar a máximo 3 interacciones exitosas por sesión para evitar rate limits
+        if (successCount >= 3) {
+          console.log(`✅ Límite de 3 interacciones alcanzado, finalizando...`);
+          break;
+        }
       }
+
+      console.log(`📊 Engagement completado: ${successCount} interacciones exitosas`);
 
       // Guardar los últimos 100 registros
       interactions.liked = interactions.liked.slice(0, 100);
