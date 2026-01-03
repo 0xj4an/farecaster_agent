@@ -41,6 +41,12 @@ const MAX_CASTS_PER_ACCOUNT = parseEnvInt('MAX_CASTS_PER_ACCOUNT', 200);
 const CASTS_PAGE_SIZE = parseEnvInt('CASTS_PAGE_SIZE', 50);
 const ACTION_DELAY_MS = parseEnvInt('ACTION_DELAY_MS', 3000);
 
+// Insights (topic mining + daily cast) tuning
+const INSIGHTS_ENABLED = (process.env.INSIGHTS_ENABLED ?? '0') === '1';
+const INSIGHTS_DAYS = parseEnvInt('INSIGHTS_DAYS', 1); // summarize last N days into a daily cast
+const INSIGHTS_STORE_DAYS = parseEnvInt('INSIGHTS_STORE_DAYS', 30); // keep last N days in insights.json
+const INSIGHTS_POST_CRON = process.env.INSIGHTS_POST_CRON || '30 8 * * *'; // 8:30 AM Bogota
+
 // Cliente axios configurado con headers de autenticación
 const neynarClient = axios.create({
   baseURL: NEYNAR_BASE_URL,
@@ -54,12 +60,14 @@ const neynarClient = axios.create({
 const HISTORY_PATH = './cast_history.json';
 const LOG_PATH = './casts.log';
 const STATE_PATH = './state.json';
+const INSIGHTS_PATH = './insights.json';
 
 function loadState() {
   try {
     if (!fs.existsSync(STATE_PATH)) return { last_post_ms: null };
     const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
-    return { last_post_ms: data?.last_post_ms ?? null };
+    // Keep this flexible for future fields (e.g., last_insights_post_ymd)
+    return typeof data === 'object' && data !== null ? data : { last_post_ms: null };
   } catch {
     return { last_post_ms: null };
   }
@@ -67,6 +75,88 @@ function loadState() {
 
 function saveState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf8');
+}
+
+function loadInsights() {
+  try {
+    if (!fs.existsSync(INSIGHTS_PATH)) return { seen: [], items: [] };
+    const data = JSON.parse(fs.readFileSync(INSIGHTS_PATH, 'utf8'));
+    return { seen: Array.isArray(data?.seen) ? data.seen : [], items: Array.isArray(data?.items) ? data.items : [] };
+  } catch {
+    return { seen: [], items: [] };
+  }
+}
+
+function saveInsights(data) {
+  fs.writeFileSync(INSIGHTS_PATH, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function clampText(s, maxLen) {
+  if (typeof s !== 'string') return '';
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
+}
+
+function extractHashtags(text) {
+  if (typeof text !== 'string') return [];
+  const matches = text.match(/#[\p{L}\p{N}_]{2,}/gu) || [];
+  return matches.map(t => t.toLowerCase());
+}
+
+function extractMentions(text) {
+  if (typeof text !== 'string') return [];
+  const matches = text.match(/@[\p{L}\p{N}_\.]{2,}/gu) || [];
+  return matches.map(t => t.toLowerCase());
+}
+
+function extractKeywords(text) {
+  if (typeof text !== 'string') return [];
+  const stop = new Set([
+    'the','and','for','with','that','this','from','your','you','are','was','were','have','has','had','will','just','sobre','para','con','una','uno','que','por','del','las','los','pero','como','más','muy','hoy','ayer','esto','esta','este','está','están','ser','sea','son','sus','nos','tus','mis','mi','tu','en','un','una','y','o','de','a','la','el','es'
+  ]);
+  const tokens = text
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 4 && !stop.has(t));
+  return tokens;
+}
+
+function topNFromCounts(counts, n) {
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k]) => k);
+}
+
+function buildDailyInsightsCast(insights, followedAccounts) {
+  const countsTags = new Map();
+  const countsWords = new Map();
+  const countsMentions = new Map();
+
+  for (const it of insights.items) {
+    const text = it?.text || '';
+    for (const h of (it?.hashtags || [])) countsTags.set(h, (countsTags.get(h) || 0) + 1);
+    for (const m of (it?.mentions || [])) countsMentions.set(m, (countsMentions.get(m) || 0) + 1);
+    for (const w of extractKeywords(text)) countsWords.set(w, (countsWords.get(w) || 0) + 1);
+  }
+
+  const tags = topNFromCounts(countsTags, 3);
+  const words = topNFromCounts(countsWords, 5);
+  const mentions = topNFromCounts(countsMentions, 2);
+
+  const topics = [...new Set([...tags, ...words.slice(0, 3)])].slice(0, 4);
+  const sources = followedAccounts.map(a => `@${a.username}`).slice(0, 4).join(' ');
+
+  const parts = [];
+  parts.push('Daily FC pulse 🟣');
+  if (topics.length) parts.push(`Topics: ${topics.join(' · ')}`);
+  if (mentions.length) parts.push(`Mentions: ${mentions.join(' ')}`);
+  if (sources) parts.push(`From: ${sources}`);
+
+  return clampText(parts.join('\n'), 320);
 }
 
 // 🗂️ Leer todos los mensajes desde messages.json
@@ -375,6 +465,87 @@ function getCastTimestampMs(cast) {
     return all;
   }
 
+  async function refreshInsightsFromAccounts(accounts, storeCutoffMs) {
+    const insights = loadInsights();
+    const seen = new Set(insights.seen);
+
+    for (const account of accounts) {
+      const casts = await getUserCastsSince(account.fid, storeCutoffMs);
+      for (const cast of casts) {
+        const hash = normalizeCastHash(cast?.hash);
+        if (!hash) continue;
+        if (seen.has(hash)) continue;
+
+        const text = typeof cast?.text === 'string' ? cast.text : '';
+        const ts = getCastTimestampMs(cast) ?? Date.now();
+
+        insights.items.push({
+          hash,
+          fid: account.fid,
+          username: account.username,
+          ts,
+          text: clampText(text, 500),
+          hashtags: extractHashtags(text),
+          mentions: extractMentions(text)
+        });
+        seen.add(hash);
+      }
+    }
+
+    // prune to last INSIGHTS_STORE_DAYS
+    const cutoff = Date.now() - INSIGHTS_STORE_DAYS * 24 * 60 * 60 * 1000;
+    insights.items = insights.items.filter(it => typeof it?.ts === 'number' && it.ts >= cutoff);
+    // cap to keep file small
+    insights.items = insights.items.slice(-5000);
+
+    // rebuild seen from items (keeps it consistent)
+    insights.seen = insights.items.map(it => it.hash);
+    saveInsights(insights);
+    return insights;
+  }
+
+  function ymdBogota() {
+    // Stable daily key in Bogota time
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  }
+
+  async function runDailyInsightsCast(accounts) {
+    if (!INSIGHTS_ENABLED) return;
+    if (!NEYNAR_API_KEY) return;
+
+    const state = loadState();
+    const today = ymdBogota();
+    if (state.last_insights_post_ymd === today) {
+      console.log('ℹ️ Daily insights cast ya fue publicado hoy, saltando...');
+      return;
+    }
+
+    const storeCutoffMs = Date.now() - INSIGHTS_STORE_DAYS * 24 * 60 * 60 * 1000;
+    const insights = await refreshInsightsFromAccounts(accounts, storeCutoffMs);
+
+    const sinceMs = Date.now() - INSIGHTS_DAYS * 24 * 60 * 60 * 1000;
+    const window = { items: insights.items.filter(it => typeof it?.ts === 'number' && it.ts >= sinceMs) };
+
+    if (!window.items.length) {
+      console.log('ℹ️ No hay casts recientes para generar insights hoy.');
+      state.last_insights_post_ymd = today;
+      saveState(state);
+      return;
+    }
+
+    const text = buildDailyInsightsCast(window, accounts);
+    console.log('🧠 Publicando daily insights cast...');
+    await publishCast(text, 'insights');
+
+    state.last_insights_post_ymd = today;
+    saveState(state);
+  }
+
   // 🧠 Cargar historial de interacciones (para no repetir)
   function loadInteractions() {
     try {
@@ -548,6 +719,13 @@ function getCastTimestampMs(cast) {
       engagementInProgress = false;
     }
   }
+
+  // 🧠 Daily insights cast (topics mined from followed accounts)
+  cron.schedule(INSIGHTS_POST_CRON, () => {
+    runDailyInsightsCast(followedAccounts).catch(err => {
+      console.error('⚠️ Error generando daily insights cast:', err.response?.data?.message || err.message);
+    });
+  }, { timezone: 'America/Bogota' });
   
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
   cron.schedule('0 9 * * *', () => {

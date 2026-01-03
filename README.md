@@ -42,6 +42,15 @@ SIGNER_UUID=your_signer_uuid_here
 STARTUP_TEST_POST=1
 # Optional: ignore 24h gate and force a startup post
 # FORCE_STARTUP_TEST_POST=0
+
+# Optional: daily insights cast (topics from followed accounts)
+INSIGHTS_ENABLED=1
+# Summarize last N days into the daily insights cast
+INSIGHTS_DAYS=1
+# Keep last N days in insights.json cache
+INSIGHTS_STORE_DAYS=30
+# Cron schedule for insights post (Bogota timezone)
+INSIGHTS_POST_CRON="30 8 * * *"
 ```
 
 1. **Update followed accounts with real FIDs**:
@@ -80,6 +89,10 @@ Visit their Warpcast profile and check the URL or use tools like [fid.info](http
 | `SIGNER_UUID` | Required for writes (casts/likes/recasts). Must be a UUID signer from Neynar. |
 | `STARTUP_TEST_POST` | Optional. If `1`, posts one cast on startup (respects 24h gate). |
 | `FORCE_STARTUP_TEST_POST` | Optional. If `1`, forces a startup cast even if last cast was <24h ago. |
+| `INSIGHTS_ENABLED` | Optional. If `1`, posts a daily “topics pulse” based on followed accounts. |
+| `INSIGHTS_DAYS` | Optional. How many days of casts to summarize into the daily insights cast. |
+| `INSIGHTS_STORE_DAYS` | Optional. How many days to keep in the local insights cache. |
+| `INSIGHTS_POST_CRON` | Optional. Cron string for the insights post time (Bogota timezone). |
 
 ## 📖 Usage
 
