@@ -36,6 +36,7 @@ Create a `.env` file (or set these in Railway):
 # Neynar API Configuration
 NEYNAR_API_KEY=your_neynar_api_key_here
 FID=your_fid_here
+SIGNER_UUID=your_signer_uuid_here
 ```
 
 1. **Update followed accounts with real FIDs**:
@@ -70,7 +71,8 @@ Visit their Warpcast profile and check the URL or use tools like [fid.info](http
 | Variable | Description |
 | --- | --- |
 | `NEYNAR_API_KEY` | Your Neynar API Key from dashboard |
-| `FID` | Identifier used by this bot for Neynar write calls (`signer_uuid`) |
+| `FID` | Your Farcaster numeric FID (optional; used for logging) |
+| `SIGNER_UUID` | Required for writes (casts/likes/recasts). Must be a UUID signer from Neynar. |
 
 ## 📖 Usage
 

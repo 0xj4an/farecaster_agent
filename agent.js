@@ -4,9 +4,19 @@ import fs from 'fs';
 
 // 🟣 Configurar cliente de Neynar (Farcaster API)
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
-// NOTE: This bot uses the env var name "FID" for the value sent as Neynar "signer_uuid".
+// Your Farcaster numeric FID (optional; mainly for logging / future extensions).
 const FID = process.env.FID;
+// Neynar write endpoints require a UUID signer (NOT a numeric FID).
+// Prefer explicit SIGNER_UUID, but support older setups where FID was used to store the signer UUID.
+const isUuid = (v) =>
+  typeof v === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const SIGNER_UUID = process.env.SIGNER_UUID || (isUuid(FID) ? FID : undefined);
 const NEYNAR_BASE_URL = 'https://api.neynar.com/v2/farcaster';
+
+// If your Neynar plan/API key does not allow write actions (like/recast), avoid spamming retries.
+let CAN_USE_REACTIONS = true;
+let CAN_USE_WRITES = true;
 
 // Cliente axios configurado con headers de autenticación
 const neynarClient = axios.create({
@@ -75,8 +85,9 @@ function logCast(group, message) {
 // 🟣 Publicar cast en Farcaster
 async function publishCast(text, group) {
   try {
+    if (!CAN_USE_WRITES) return;
     const response = await neynarClient.post('/cast', {
-      signer_uuid: FID,
+      signer_uuid: SIGNER_UUID,
       text: text
     });
 
@@ -194,6 +205,17 @@ console.log('💚 Auto-engagement: 3 veces al día (9 AM, 3 PM, 9 PM) con cuenta
 console.log('🗓️ Archivado: Fin de cada mes a las 23:59 (hora Bogotá)');
 console.log('🟣 Usando Neynar API para Warpcast/Farcaster');
 
+if (FID && /^\d+$/.test(FID) && !SIGNER_UUID) {
+  console.log('⚠️ Tu variable FID es numérica (ej: 13194). Para escribir (cast/like/recast) necesitas SIGNER_UUID (UUID de Neynar).');
+}
+
+if (!SIGNER_UUID) {
+  CAN_USE_WRITES = false;
+  CAN_USE_REACTIONS = false;
+  console.log('⚠️ SIGNER_UUID no configurado/ inválido → deshabilitando casts + reactions (like/recast).');
+  console.log('ℹ️ Configura SIGNER_UUID con el UUID de tu signer (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).');
+}
+
 // 🧪 Prueba manual — descomentado para testing
 // (async () => {
 //     console.log('🧪 Test manual: publicando un cast de prueba...');
@@ -291,10 +313,14 @@ const followedAccounts = [
         // 💛 Dar like (reaction)
         if (!alreadyLiked) {
           try {
+            if (!CAN_USE_REACTIONS) {
+              // Skip if reactions are not available on the current plan/key
+              continue;
+            }
             await neynarClient.post('/reaction', {
-              signer_uuid: FID,
+              signer_uuid: SIGNER_UUID,
               reaction_type: 'like',
-              target: castHash
+              target: { cast_id: { fid: account.fid, hash: castHash } }
             });
             console.log(`💛 Like a cast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.liked.unshift(castHash);
@@ -302,6 +328,15 @@ const followedAccounts = [
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
             const errorMsg = err.response?.data?.message || err.message;
+
+            if (typeof errorMsg === 'string' && errorMsg.toLowerCase().includes('upgrade to a paid plan')) {
+              CAN_USE_REACTIONS = false;
+              console.log('⚠️ Reactions (like/recast) no disponibles en tu plan de Neynar. Saltando reacciones para evitar spam.');
+            }
+
+            if (errorMsg === 'Invalid body parameters') {
+              console.log('ℹ️ Detalle error (reaction like):', JSON.stringify(err.response?.data ?? {}, null, 2));
+            }
 
             // Marcar como procesado si ya fue liked
             if (errorMsg.includes('already') || errorMsg.includes('duplicate')) {
@@ -316,13 +351,16 @@ const followedAccounts = [
           }
         }
 
-        // 🔁 Recast (quote cast con texto vacío)
+        // 🔁 Recast (reaction)
         if (!alreadyRecasted) {
           try {
-            await neynarClient.post('/cast', {
-              signer_uuid: FID,
-              text: '',
-              embeds: [{ cast_id: { hash: castHash, fid: account.fid } }]
+            if (!CAN_USE_REACTIONS) {
+              continue;
+            }
+            await neynarClient.post('/reaction', {
+              signer_uuid: SIGNER_UUID,
+              reaction_type: 'recast',
+              target: { cast_id: { fid: account.fid, hash: castHash } }
             });
             console.log(`🔁 Recast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.recasted.unshift(castHash);
@@ -330,6 +368,15 @@ const followedAccounts = [
             await wait(3000); // Esperar 3 segundos entre acciones
           } catch (err) {
             const errorMsg = err.response?.data?.message || err.message;
+
+            if (typeof errorMsg === 'string' && errorMsg.toLowerCase().includes('upgrade to a paid plan')) {
+              CAN_USE_REACTIONS = false;
+              console.log('⚠️ Reactions (like/recast) no disponibles en tu plan de Neynar. Saltando reacciones para evitar spam.');
+            }
+
+            if (errorMsg === 'Invalid body parameters') {
+              console.log('ℹ️ Detalle error (reaction recast):', JSON.stringify(err.response?.data ?? {}, null, 2));
+            }
 
             // Marcar como procesado si ya fue recasteado
             if (errorMsg.includes('already') || errorMsg.includes('duplicate')) {
@@ -371,45 +418,45 @@ const followedAccounts = [
   
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
   cron.schedule('0 9 * * *', () => {
-    if (NEYNAR_API_KEY && FID) {
+    if (NEYNAR_API_KEY) {
       const account = getRandomAccount();
       console.log(`🌅 Auto-engagement matutino con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // ☀️ Tarde (3:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 15 * * *', () => {
-    if (NEYNAR_API_KEY && FID) {
+    if (NEYNAR_API_KEY) {
       const account = getRandomAccount();
       console.log(`☀️ Auto-engagement vespertino con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // 🌙 Noche (9:00 PM) - Revisar cuenta aleatoria
   cron.schedule('0 21 * * *', () => {
-    if (NEYNAR_API_KEY && FID) {
+    if (NEYNAR_API_KEY) {
       const account = getRandomAccount();
       console.log(`🌙 Auto-engagement nocturno con @${account.username}...`);
       engageWithAccount(account);
     } else {
-      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY o FID no configurado');
+      console.log('⚠️ Auto-engagement saltado: NEYNAR_API_KEY no configurado');
     }
   }, { timezone: 'America/Bogota' });
 
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
-  if (NEYNAR_API_KEY && FID) {
+  if (NEYNAR_API_KEY) {
     const account = getRandomAccount();
     console.log(`🚀 Ejecutando auto-engagement inicial con @${account.username}...`);
     engageWithAccount(account).catch(err => {
       console.error('⚠️ Error en auto-engagement inicial:', err.message);
     });
   } else {
-    console.log('⚠️ NEYNAR_API_KEY o FID no configurado. Auto-engagement deshabilitado.');
-    console.log('ℹ️ Para habilitar auto-engagement, añade NEYNAR_API_KEY y FID a las variables de entorno.');
+    console.log('⚠️ NEYNAR_API_KEY no configurado. Auto-engagement deshabilitado.');
+    console.log('ℹ️ Para habilitar auto-engagement, añade NEYNAR_API_KEY a las variables de entorno.');
   }
