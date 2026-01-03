@@ -1,8 +1,6 @@
 import { TwitterApi } from 'twitter-api-v2';
-import dotenv from 'dotenv';
 import cron from 'node-cron';
 import fs from 'fs';
-dotenv.config();
 
 // 🐦 Configurar cliente de Twitter
 const client = new TwitterApi({
@@ -178,7 +176,10 @@ cron.schedule('59 23 * * *', () => {
   }
 }, { timezone: 'America/Bogota' });
 
-console.log('🤖 Agente activo. Publicará 1 vez cada 24 horas a una hora aleatoria y reiniciará al final de cada mes (23:59 hora Bogotá).');
+console.log('🤖 Agente activo.');
+console.log('📅 Posts: 1 vez cada 24 horas a una hora aleatoria');
+console.log('💚 Auto-engagement: 3 veces al día (9 AM, 3 PM, 9 PM) con cuentas rotativas');
+console.log('🗓️ Archivado: Fin de cada mes a las 23:59 (hora Bogotá)');
 
 // 🧪 Prueba manual — descomentado para testing
 // (async () => {
@@ -210,7 +211,7 @@ const followedAccounts = [
       const response = await fetch(`${SOCIAVAULT_API_URL}?handle=${username}`, {
         method: 'GET',
         headers: {
-          'X-API-Key': process.env.SOCIAVAULT_API_KEY
+          'Authorization': `Bearer ${process.env.SOCIAVAULT_API_KEY}`
         }
       });
 
@@ -248,85 +249,109 @@ const followedAccounts = [
   // ⏱️ Función para esperar (delay)
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 💚 Dar like + RT a tweets nuevos (usando SociaVault API para obtener + API oficial para interactuar)
-  async function engageWithCommunityTweets() {
+  // 💚 Dar like + RT a tweets nuevos de UNA cuenta específica
+  async function engageWithAccount(account) {
     const interactions = loadInteractions();
 
-    for (const account of followedAccounts) {
-      try {
-        // 🔍 Usar SociaVault API para obtener tweets recientes
-        console.log(`🔍 Obteniendo tweets de @${account.username} con SociaVault API...`);
-        const tweets = await getUserTweets(account.username);
+    try {
+      // 🔍 Usar SociaVault API para obtener tweets
+      console.log(`🔍 Obteniendo tweets de @${account.username} con SociaVault API...`);
+      const tweets = await getUserTweets(account.username);
 
-        if (tweets.length === 0) {
-          console.log(`ℹ️ No se encontraron tweets de @${account.username}`);
+      if (tweets.length === 0) {
+        console.log(`ℹ️ No se encontraron tweets de @${account.username}`);
+        return;
+      }
+
+      console.log(`✅ Encontrados ${tweets.length} tweets de @${account.username}`);
+
+      // Limitar a los primeros 5 tweets
+      const recentTweets = tweets.slice(0, 5);
+
+      // 💚 Interactuar con cada tweet usando la API oficial
+      for (const tweet of recentTweets) {
+        // SociaVault devuelve el ID en rest_id o legacy.id_str
+        const tweetId = tweet.rest_id || tweet.legacy?.id_str;
+
+        if (!tweetId) {
+          console.log(`⚠️ Tweet sin ID, saltando...`);
           continue;
         }
 
-        console.log(`✅ Encontrados ${tweets.length} tweets de @${account.username}`);
+        const alreadyLiked = interactions.liked.includes(tweetId);
+        const alreadyRT = interactions.retweeted.includes(tweetId);
 
-        // Limitar a los primeros 5 tweets
-        const recentTweets = tweets.slice(0, 5);
-
-        // 💚 Interactuar con cada tweet usando la API oficial
-        for (const tweet of recentTweets) {
-          // SociaVault devuelve el ID en rest_id o legacy.id_str
-          const tweetId = tweet.rest_id || tweet.legacy?.id_str;
-
-          if (!tweetId) {
-            console.log(`⚠️ Tweet sin ID, saltando...`);
-            continue;
-          }
-
-          const alreadyLiked = interactions.liked.includes(tweetId);
-          const alreadyRT = interactions.retweeted.includes(tweetId);
-
-          if (!alreadyLiked) {
-            try {
-              await client.v2.like(process.env.TWITTER_USER_ID, tweetId);
-              console.log(`💛 Like a tweet de @${account.username}: ${tweetId}`);
-              interactions.liked.unshift(tweetId);
-              await wait(2000); // Esperar 2 segundos entre likes
-            } catch (err) {
-              if (err?.data?.status !== 403) {
-                console.log(`⚠️ Error dando like: ${err.message}`);
-              }
-            }
-          }
-
-          if (!alreadyRT) {
-            try {
-              await client.v2.retweet(process.env.TWITTER_USER_ID, tweetId);
-              console.log(`🔁 Retweet de @${account.username}: ${tweetId}`);
-              interactions.retweeted.unshift(tweetId);
-              await wait(2000); // Esperar 2 segundos entre retweets
-            } catch (err) {
-              if (err?.data?.status !== 403) {
-                console.log(`⚠️ Error haciendo RT: ${err.message}`);
-              }
+        if (!alreadyLiked) {
+          try {
+            await client.v2.like(process.env.TWITTER_USER_ID, tweetId);
+            console.log(`💛 Like a tweet de @${account.username}: ${tweetId}`);
+            interactions.liked.unshift(tweetId);
+            await wait(2000); // Esperar 2 segundos entre likes
+          } catch (err) {
+            if (err?.data?.status !== 403) {
+              console.log(`⚠️ Error dando like: ${err.message}`);
             }
           }
         }
 
-        // Esperar 3 segundos entre cuentas
-        await wait(3000);
-
-      } catch (err) {
-        console.error(`⚠️ Error procesando @${account.username}:`, err.message);
+        if (!alreadyRT) {
+          try {
+            await client.v2.retweet(process.env.TWITTER_USER_ID, tweetId);
+            console.log(`🔁 Retweet de @${account.username}: ${tweetId}`);
+            interactions.retweeted.unshift(tweetId);
+            await wait(2000); // Esperar 2 segundos entre retweets
+          } catch (err) {
+            if (err?.data?.status !== 403) {
+              console.log(`⚠️ Error haciendo RT: ${err.message}`);
+            }
+          }
+        }
       }
+
+      // Guardar los últimos 100 registros
+      interactions.liked = interactions.liked.slice(0, 100);
+      interactions.retweeted = interactions.retweeted.slice(0, 100);
+      saveInteractions(interactions);
+
+    } catch (err) {
+      console.error(`⚠️ Error procesando @${account.username}:`, err.message);
     }
-  
-    // Guardar los últimos 100 registros
-    interactions.liked = interactions.liked.slice(0, 100);
-    interactions.retweeted = interactions.retweeted.slice(0, 100);
-    saveInteractions(interactions);
+  }
+
+  // 🎲 Seleccionar cuenta aleatoria para revisar
+  function getRandomAccount() {
+    const randomIndex = Math.floor(Math.random() * followedAccounts.length);
+    return followedAccounts[randomIndex];
   }
   
-  // 🕒 Ejecutar cada 4 horas (America/Bogota) - Reducido para evitar rate limits
-  cron.schedule('0 */4 * * *', () => {
+  // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
+  cron.schedule('0 9 * * *', () => {
     if (process.env.SOCIAVAULT_API_KEY) {
-      console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
-      engageWithCommunityTweets();
+      const account = getRandomAccount();
+      console.log(`🌅 Auto-engagement matutino con @${account.username}...`);
+      engageWithAccount(account);
+    } else {
+      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+    }
+  }, { timezone: 'America/Bogota' });
+
+  // ☀️ Tarde (3:00 PM) - Revisar cuenta aleatoria
+  cron.schedule('0 15 * * *', () => {
+    if (process.env.SOCIAVAULT_API_KEY) {
+      const account = getRandomAccount();
+      console.log(`☀️ Auto-engagement vespertino con @${account.username}...`);
+      engageWithAccount(account);
+    } else {
+      console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
+    }
+  }, { timezone: 'America/Bogota' });
+
+  // 🌙 Noche (9:00 PM) - Revisar cuenta aleatoria
+  cron.schedule('0 21 * * *', () => {
+    if (process.env.SOCIAVAULT_API_KEY) {
+      const account = getRandomAccount();
+      console.log(`🌙 Auto-engagement nocturno con @${account.username}...`);
+      engageWithAccount(account);
     } else {
       console.log('⚠️ Auto-engagement saltado: SOCIAVAULT_API_KEY no configurado');
     }
@@ -335,8 +360,9 @@ const followedAccounts = [
   // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
   // Descomentado solo si SOCIAVAULT_API_KEY está configurado
   if (process.env.SOCIAVAULT_API_KEY) {
-    console.log('🚀 Ejecutando auto-engagement inicial con SociaVault API...');
-    engageWithCommunityTweets().catch(err => {
+    const account = getRandomAccount();
+    console.log(`🚀 Ejecutando auto-engagement inicial con @${account.username}...`);
+    engageWithAccount(account).catch(err => {
       console.error('⚠️ Error en auto-engagement inicial:', err.message);
     });
   } else {
