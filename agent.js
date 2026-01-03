@@ -326,3 +326,9 @@ const followedAccounts = [
     console.log('🤝 Revisando cuentas aliadas para likes/RTs...');
     engageWithCommunityTweets();
   }, { timezone: 'America/Bogota' });
+
+  // 🚀 Ejecutar auto-engagement inmediatamente al iniciar (para testing)
+  console.log('🚀 Ejecutando auto-engagement inicial...');
+  engageWithCommunityTweets().catch(err => {
+    console.error('⚠️ Error en auto-engagement inicial:', err.message);
+  });
