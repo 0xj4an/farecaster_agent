@@ -211,9 +211,10 @@ console.log('🟣 Usando Neynar API para Warpcast/Farcaster');
   // 🧩 AUTO-LIKE + RECAST a cuentas aliadas en Farcaster
   // Nota: Necesitarás obtener los FIDs de estas cuentas desde Warpcast
 const followedAccounts = [
-    { username: 'celo-col', fid: 0 },        // TODO: Obtener FID real de @celo-col en Warpcast
-    { username: 'refimed', fid: 0 },         // TODO: Obtener FID real de @refimed en Warpcast
-    { username: 'medellinblock', fid: 0 }    // TODO: Obtener FID real de @medellinblock en Warpcast
+    { username: 'celocolombia', fid: 1371908 },
+    { username: 'celo', fid: 3430 },
+    { username: 'refimedellin', fid: 226645 },
+    { username: 'celopg', fid: 813807 }
   ];
 
   const INTERACTIONS_PATH = './interactions.json';
