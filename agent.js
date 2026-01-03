@@ -18,6 +18,15 @@ const NEYNAR_BASE_URL = 'https://api.neynar.com/v2/farcaster';
 let CAN_USE_REACTIONS = true;
 let CAN_USE_WRITES = true;
 
+function normalizeCastHash(hash) {
+  if (typeof hash !== 'string') return null;
+  const trimmed = hash.trim();
+  if (/^0x[0-9a-f]{40,}$/i.test(trimmed)) return trimmed;
+  // Some sources may return the hash without the 0x prefix
+  if (/^[0-9a-f]{40,}$/i.test(trimmed)) return `0x${trimmed}`;
+  return null;
+}
+
 // Cliente axios configurado con headers de autenticación
 const neynarClient = axios.create({
   baseURL: NEYNAR_BASE_URL,
@@ -295,10 +304,10 @@ const followedAccounts = [
       // 💚 Interactuar con cada cast usando Neynar API
       let successCount = 0;
       for (const cast of casts) {
-        const castHash = cast.hash;
+        const castHash = normalizeCastHash(cast.hash);
 
         if (!castHash) {
-          console.log(`⚠️ Cast sin hash, saltando...`);
+          console.log(`⚠️ Cast con hash inválido, saltando...`);
           continue;
         }
 
@@ -320,7 +329,7 @@ const followedAccounts = [
             await neynarClient.post('/reaction', {
               signer_uuid: SIGNER_UUID,
               reaction_type: 'like',
-              target: { cast_id: { fid: account.fid, hash: castHash } }
+              target: castHash
             });
             console.log(`💛 Like a cast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.liked.unshift(castHash);
@@ -360,7 +369,7 @@ const followedAccounts = [
             await neynarClient.post('/reaction', {
               signer_uuid: SIGNER_UUID,
               reaction_type: 'recast',
-              target: { cast_id: { fid: account.fid, hash: castHash } }
+              target: castHash
             });
             console.log(`🔁 Recast de @${account.username}: ${castHash.substring(0, 10)}...`);
             interactions.recasted.unshift(castHash);
