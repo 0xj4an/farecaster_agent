@@ -36,8 +36,8 @@ function parseEnvInt(name, defaultValue) {
 
 // Engagement tuning
 const LOOKBACK_DAYS = parseEnvInt('LOOKBACK_DAYS', 30); // last N days to consider for engagement
-const MAX_ACTIONS_PER_RUN = parseEnvInt('MAX_ACTIONS_PER_RUN', 0); // 0 = unlimited
-const MAX_CASTS_PER_ACCOUNT = parseEnvInt('MAX_CASTS_PER_ACCOUNT', 200);
+const MAX_ACTIONS_PER_RUN = parseEnvInt('MAX_ACTIONS_PER_RUN', 5); // max likes+recasts per account per run
+const MAX_CASTS_REVIEW_PER_ACCOUNT = parseEnvInt('MAX_CASTS_REVIEW_PER_ACCOUNT', 0); // 0 = unlimited, review all casts
 const CASTS_PAGE_SIZE = parseEnvInt('CASTS_PAGE_SIZE', 50);
 const ACTION_DELAY_MS = parseEnvInt('ACTION_DELAY_MS', 3000);
 
@@ -486,7 +486,7 @@ function getCastTimestampMs(cast) {
     let cursor = null;
     let keepGoing = true;
 
-    while (keepGoing && all.length < MAX_CASTS_PER_ACCOUNT) {
+    while (keepGoing && all.length < MAX_CASTS_REVIEW_PER_ACCOUNT) {
       const { casts, nextCursor } = await getUserCastsPage(fid, cursor);
       if (!casts.length) break;
 
@@ -497,7 +497,7 @@ function getCastTimestampMs(cast) {
           break;
         }
         all.push(cast);
-        if (all.length >= MAX_CASTS_PER_ACCOUNT) break;
+        if (all.length >= MAX_CASTS_REVIEW_PER_ACCOUNT) break;
       }
 
       if (!keepGoing) break;
@@ -585,12 +585,8 @@ function getCastTimestampMs(cast) {
     console.log(`📊 Insights: ${insights.items.length} casts totales, ${window.items.length} en ventana de ${INSIGHTS_DAYS} día(s)`);
 
     if (!window.items.length) {
-      console.log('ℹ️ No hay insights data suficiente → Publicando mensaje aleatorio como fallback');
-      const currentHour = new Date().getHours();
-      const group = getMessageGroupByHour(currentHour);
-      const msg = getRandomMessage(group);
-      console.log(`📝 Mensaje aleatorio seleccionado (${group}): "${clampText(msg, 80)}"`);
-      await publishCast(msg, group);
+      console.log('ℹ️ No hay suficientes insights para generar un cast. No se publicará post de Insights hoy.');
+      console.log('💡 El bot esperará hasta mañana para intentar nuevamente.');
       state.last_insights_post_ymd = today;
       saveState(state);
       return;

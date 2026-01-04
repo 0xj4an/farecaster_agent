@@ -30,27 +30,36 @@ npm install
 
 1. **Configure environment variables**:
 
-Create a `.env` file (or set these in Railway):
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Or create a `.env` file manually:
 
 ```env
-# Neynar API Configuration
+# 🟣 Farcaster/Neynar Configuration (REQUIRED)
 NEYNAR_API_KEY=your_neynar_api_key_here
-FID=your_fid_here
-SIGNER_UUID=your_signer_uuid_here
+SIGNER_UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+FID=your_numeric_fid_here
 
-# Optional: startup test post (recommended for deploy validation)
-STARTUP_TEST_POST=1
-# Optional: ignore 24h gate and force a startup post
-# FORCE_STARTUP_TEST_POST=0
+# ⚙️ Engagement Tuning (OPTIONAL - defaults shown)
+LOOKBACK_DAYS=30
+MAX_ACTIONS_PER_RUN=5
+MAX_CASTS_REVIEW_PER_ACCOUNT=0
+CASTS_PAGE_SIZE=50
+ACTION_DELAY_MS=3000
 
-# Optional: daily insights cast (topics from followed accounts)
-INSIGHTS_ENABLED=1
-# Summarize last N days into the daily insights cast
+# 🧠 Daily Insights (OPTIONAL)
+INSIGHTS_ENABLED=0
 INSIGHTS_DAYS=1
-# Keep last N days in insights.json cache
 INSIGHTS_STORE_DAYS=30
-# Cron schedule for insights post (Bogota timezone)
-INSIGHTS_POST_CRON="30 8 * * *"
+INSIGHTS_POST_CRON=30 8 * * *
+
+# 🚀 Startup Post (OPTIONAL)
+STARTUP_TEST_POST=1
+FORCE_STARTUP_TEST_POST=0
 ```
 
 1. **Update followed accounts with real FIDs**:
@@ -82,17 +91,39 @@ Visit their Warpcast profile and check the URL or use tools like [fid.info](http
 
 ### Environment Variables
 
+#### Required Variables
+
 | Variable | Description |
 | --- | --- |
 | `NEYNAR_API_KEY` | Your Neynar API Key from dashboard |
+| `SIGNER_UUID` | Required for writes (casts/likes/recasts). Must be a UUID signer from Neynar (format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) |
 | `FID` | Your Farcaster numeric FID (optional; used for logging) |
-| `SIGNER_UUID` | Required for writes (casts/likes/recasts). Must be a UUID signer from Neynar. |
-| `STARTUP_TEST_POST` | Optional. If `1`, posts one cast on startup (respects 24h gate). |
-| `FORCE_STARTUP_TEST_POST` | Optional. If `1`, forces a startup cast even if last cast was <24h ago. |
-| `INSIGHTS_ENABLED` | Optional. If `1`, posts a daily “topics pulse” based on followed accounts. |
-| `INSIGHTS_DAYS` | Optional. How many days of casts to summarize into the daily insights cast. |
-| `INSIGHTS_STORE_DAYS` | Optional. How many days to keep in the local insights cache. |
-| `INSIGHTS_POST_CRON` | Optional. Cron string for the insights post time (Bogota timezone). |
+
+#### Engagement Tuning (Optional)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LOOKBACK_DAYS` | `30` | Number of days to look back for engagement |
+| `MAX_ACTIONS_PER_RUN` | `5` | Maximum likes+recasts per account per execution (5 × 3 runs = 15/day per account) |
+| `MAX_CASTS_REVIEW_PER_ACCOUNT` | `0` | Maximum casts to review per account (0 = unlimited, reviews all available) |
+| `CASTS_PAGE_SIZE` | `50` | Number of casts to fetch per API page |
+| `ACTION_DELAY_MS` | `3000` | Delay between actions in milliseconds (3 seconds) |
+
+#### Daily Insights (Optional)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `INSIGHTS_ENABLED` | `0` | If `1`, posts a daily "topics pulse" based on followed accounts |
+| `INSIGHTS_DAYS` | `1` | How many days of casts to summarize into the daily insights cast |
+| `INSIGHTS_STORE_DAYS` | `30` | How many days to keep in the local insights cache |
+| `INSIGHTS_POST_CRON` | `30 8 * * *` | Cron string for the insights post time (8:30 AM Bogota timezone) |
+
+#### Startup Options (Optional)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STARTUP_TEST_POST` | `1` | If `1`, posts one cast on startup (respects 24h gate) |
+| `FORCE_STARTUP_TEST_POST` | `0` | If `1`, forces a startup cast even if last cast was <24h ago |
 
 ## 📖 Usage
 
@@ -127,8 +158,12 @@ The agent will:
   - ☀️ 3:00 PM (Bogotá time)
   - 🌙 9:00 PM (Bogotá time)
 - **Startup**: Runs immediately on deployment
-- **Community Accounts**: Random selection from followed accounts list
-- **Actions**: Likes + Recasts recent casts (max 5 per account, 3 interactions per session)
+- **Accounts**: All followed accounts are checked in each execution
+- **Actions per execution**: Max 5 likes+recasts per account
+- **Daily limit**: Max 15 actions per account per day (5 × 3 executions)
+- **Total daily**: Max 45 actions across all 3 accounts (15 × 3 accounts)
+- **Lookback window**: Reviews casts from the last 30 days
+- **Smart filtering**: Only engages with casts not previously liked/recasted
 
 ### Monthly Archiving
 
@@ -146,9 +181,12 @@ fc_agent/
 ├── messages.json         # 320+ curated messages (morning/noon/evening)
 ├── cast_history.json     # Tracks last 10 posted messages per time slot
 ├── interactions.json     # Tracks liked/recasted posts (last 100)
+├── insights.json         # Cached insights data from followed accounts
+├── state.json            # Bot state (last post time, last insights post)
 ├── casts.log             # Local log of all posted casts
 ├── package.json          # Dependencies and scripts
-├── .env                  # Environment variables (create this)
+├── .env                  # Environment variables (create from .env.example)
+├── .env.example          # Environment variables template
 ├── .gitignore            # Git ignore file
 └── README.md             # This file
 ```
@@ -242,10 +280,22 @@ This project is designed to run continuously on [Railway](https://railway.app/):
 
 1. **Set Environment Variables**:
 
-```env
-NEYNAR_API_KEY=your_neynar_api_key
-FID=your_fid
-```
+   In Railway dashboard, add these **required** variables:
+
+   ```env
+   NEYNAR_API_KEY=your_neynar_api_key
+   SIGNER_UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   FID=your_numeric_fid
+   ```
+
+   **Optional** variables (use defaults if not set):
+
+   ```env
+   MAX_ACTIONS_PER_RUN=5
+   MAX_CASTS_REVIEW_PER_ACCOUNT=0
+   LOOKBACK_DAYS=30
+   INSIGHTS_ENABLED=1
+   ```
 
 1. **Deploy**:
    - Railway will automatically deploy
