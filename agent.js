@@ -432,8 +432,7 @@ if (STARTUP_TEST_POST && CAN_USE_WRITES) {
 const followedAccounts = [
     { username: 'celocolombia', fid: 1371908 },
     { username: 'celo', fid: 3430 },
-    { username: 'refimedellin', fid: 226645 },
-    { username: 'celopg', fid: 813807 }
+    { username: 'refimedellin', fid: 226645 }
   ];
 
   const INTERACTIONS_PATH = './interactions.json';
