@@ -582,14 +582,43 @@ function getCastTimestampMs(cast) {
     const sinceMs = Date.now() - INSIGHTS_DAYS * 24 * 60 * 60 * 1000;
     const window = { items: insights.items.filter(it => typeof it?.ts === 'number' && it.ts >= sinceMs) };
 
+    console.log(`📊 Insights: ${insights.items.length} casts totales, ${window.items.length} en ventana de ${INSIGHTS_DAYS} día(s)`);
+
     if (!window.items.length) {
-      console.log('ℹ️ No hay casts recientes para generar insights hoy.');
+      console.log('ℹ️ No hay insights data suficiente → Publicando mensaje aleatorio como fallback');
+      const currentHour = new Date().getHours();
+      const group = getMessageGroupByHour(currentHour);
+      const msg = getRandomMessage(group);
+      console.log(`📝 Mensaje aleatorio seleccionado (${group}): "${clampText(msg, 80)}"`);
+      await publishCast(msg, group);
       state.last_insights_post_ymd = today;
       saveState(state);
       return;
     }
 
+    // Log extracted insights
+    const countsTags = new Map();
+    const countsWords = new Map();
+    const countsMentions = new Map();
+
+    for (const it of window.items) {
+      const text = it?.text || '';
+      for (const h of (it?.hashtags || [])) countsTags.set(h, (countsTags.get(h) || 0) + 1);
+      for (const m of (it?.mentions || [])) countsMentions.set(m, (countsMentions.get(m) || 0) + 1);
+      for (const w of extractKeywords(text)) countsWords.set(w, (countsWords.get(w) || 0) + 1);
+    }
+
+    const topTags = topNFromCounts(countsTags, 5);
+    const topWords = topNFromCounts(countsWords, 5);
+    const topMentions = topNFromCounts(countsMentions, 5);
+
+    console.log('🧠 Insights encontrados:');
+    if (topTags.length) console.log(`   📌 Top hashtags: ${topTags.join(', ')}`);
+    if (topWords.length) console.log(`   💬 Top palabras: ${topWords.join(', ')}`);
+    if (topMentions.length) console.log(`   👤 Top menciones: ${topMentions.join(', ')}`);
+
     const text = buildDailyInsightsCast(window, accounts);
+    console.log(`✍️ Cast generado: "${text}"`);
     console.log('🧠 Publicando daily insights cast...');
     await publishCast(text, 'insights');
 
