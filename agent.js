@@ -41,11 +41,14 @@ const MAX_CASTS_REVIEW_PER_ACCOUNT = parseEnvInt('MAX_CASTS_REVIEW_PER_ACCOUNT',
 const CASTS_PAGE_SIZE = parseEnvInt('CASTS_PAGE_SIZE', 50);
 const ACTION_DELAY_MS = parseEnvInt('ACTION_DELAY_MS', 3000);
 
-// Insights (topic mining + daily cast) tuning
+// Insights (topic mining + weekly cast) tuning
+// El insights cast se publica a la mitad del intervalo semanal del random cast,
+// a una hora fija siempre. Así nunca cae el mismo día que el random cast.
 const INSIGHTS_ENABLED = (process.env.INSIGHTS_ENABLED ?? '0') === '1';
-const INSIGHTS_DAYS = parseEnvInt('INSIGHTS_DAYS', 1); // summarize last N days into a daily cast
+const INSIGHTS_DAYS = parseEnvInt('INSIGHTS_DAYS', 7); // summarize last N days into the weekly cast
 const INSIGHTS_STORE_DAYS = parseEnvInt('INSIGHTS_STORE_DAYS', 30); // keep last N days in insights.json
-const INSIGHTS_POST_CRON = process.env.INSIGHTS_POST_CRON || '30 8 * * *'; // 8:30 AM Bogota
+const INSIGHTS_OFFSET_DAYS = parseEnvInt('INSIGHTS_OFFSET_DAYS', 3); // días después del random cast (~mitad de 7)
+const INSIGHTS_HOUR = parseEnvInt('INSIGHTS_HOUR', 8); // hora fija (24h, Bogotá) del insights cast
 
 const BOT_TIMEZONE = 'America/Bogota';
 
@@ -317,10 +320,10 @@ function isLastDayOfMonth(date = new Date()) {
 
 // 🕒 Schedulers automáticos (hora local Bogotá)
 
-// 🎲 Variables para controlar el post aleatorio cada 24 horas
+// 🎲 Variables para controlar el post aleatorio una vez por semana
 const stateAtBoot = loadState();
 let lastPostTime = typeof stateAtBoot.last_post_ms === 'number' ? stateAtBoot.last_post_ms : null;
-const POST_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
+const POST_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días en milisegundos
 
 // 🌈 Función para determinar el grupo de mensaje según la hora
 function getMessageGroupByHour(hour) {
@@ -329,7 +332,7 @@ function getMessageGroupByHour(hour) {
   return 'evening';
 }
 
-// ⏰ Verificar si han pasado 24 horas desde el último post
+// ⏰ Verificar si han pasado 7 días desde el último post
 function canPostNow() {
   if (lastPostTime === null) return true; // Primera vez
   const now = Date.now();
@@ -342,28 +345,28 @@ function getRandomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// 🕐 Ejecutar cada hora para verificar si pueden pasar 24h y postear aleatoriamente
+// 🕐 Ejecutar cada hora para verificar si pueden pasar 7 días y postear aleatoriamente
 safeSchedule('0 * * * *', () => {
-  // Solo continuar si han pasado 24 horas
+  // Solo continuar si han pasado 7 días
   if (!canPostNow()) {
     const hoursRemaining = Math.ceil((POST_INTERVAL_MS - (Date.now() - lastPostTime)) / (60 * 60 * 1000));
     console.log(`⏳ Esperando... Faltan ~${hoursRemaining}h para poder postear de nuevo.`);
     return;
   }
 
-  // Decidir aleatoriamente si postear esta hora (probabilidad: ~1/8 por hora después de 24h)
-  const shouldPost = getRandomInt(1, 8) === 1;
+  // Decidir aleatoriamente si postear esta hora (probabilidad: ~1/4 por hora después de 7 días)
+  const shouldPost = getRandomInt(1, 4) === 1;
 
   if (shouldPost) {
     const currentHour = new Date().getHours();
     const group = getMessageGroupByHour(currentHour);
     const msg = getRandomMessage(group);
-    console.log(`🎲 Publicando cast aleatorio (${group}) después de 24h...`);
+    console.log(`🎲 Publicando cast aleatorio (${group}) después de 7 días...`);
     publishCast(msg, group);
     lastPostTime = Date.now();
-    console.log(`✅ Cast realizado. Próximo cast disponible en 24 horas.`);
+    console.log(`✅ Cast realizado. Próximo cast disponible en 7 días.`);
   } else {
-    console.log(`🎯 24h cumplidas, pero esperando momento aleatorio para postear...`);
+    console.log(`🎯 7 días cumplidos, pero esperando momento aleatorio para postear...`);
   }
 });
 
@@ -378,7 +381,7 @@ safeSchedule('59 23 * * *', () => {
 });
 
 console.log('🤖 Agente de Farcaster activo.');
-console.log('📅 Casts: 1 vez cada 24 horas a una hora aleatoria');
+console.log('📅 Casts: 1 vez cada 7 días a una hora aleatoria');
 console.log('💚 Auto-engagement: 3 veces al día (9 AM, 3 PM, 9 PM) con cuentas rotativas');
 console.log('🗓️ Archivado: Fin de cada mes a las 23:59 (hora Bogotá)');
 console.log('🟣 Usando Neynar API para Warpcast/Farcaster');
@@ -407,9 +410,15 @@ if (STARTUP_TEST_POST && CAN_USE_WRITES) {
     console.log(`🚀 Startup post (${group}) para validar deploy...`);
     publishCast(msg, group).then(() => {
       lastPostTime = Date.now();
-    }).catch(() => {});
+      // 🧠 Acoplado: disparar también el insights cast al iniciar
+      if (INSIGHTS_ENABLED) {
+        return runDailyInsightsCast(followedAccounts);
+      }
+    }).catch(err => {
+      console.error('⚠️ Error en startup post acoplado:', err.response?.data?.message || err.message);
+    });
   } else {
-    console.log('ℹ️ Startup post omitido: aún no han pasado 24h desde el último cast.');
+    console.log('ℹ️ Startup post omitido: aún no han pasado 7 días desde el último cast.');
   }
 }
 
@@ -615,10 +624,11 @@ function getCastTimestampMs(cast) {
 
     const text = buildDailyInsightsCast(window, accounts);
     console.log(`✍️ Cast generado: "${text}"`);
-    console.log('🧠 Publicando daily insights cast...');
+    console.log('🧠 Publicando weekly insights cast...');
     await publishCast(text, 'insights');
 
     state.last_insights_post_ymd = today;
+    state.last_insights_post_ms = Date.now();
     saveState(state);
   }
 
@@ -796,13 +806,43 @@ function getCastTimestampMs(cast) {
     }
   }
 
-  // 🧠 Daily insights cast (topics mined from followed accounts)
-  safeSchedule(INSIGHTS_POST_CRON, () => {
+  // 🧠 Weekly insights cast — corre diario a INSIGHTS_HOUR, pero solo publica si:
+  //    - El random cast ya se publicó al menos una vez (lastPostTime existe)
+  //    - Pasaron al menos INSIGHTS_OFFSET_DAYS desde el último random cast (mitad del intervalo)
+  //    - Pasaron al menos 6 días desde el último insights cast (evita doble disparo)
+  safeSchedule(`0 ${INSIGHTS_HOUR} * * *`, () => {
+    if (!INSIGHTS_ENABLED) return;
+
+    const now = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    if (lastPostTime === null) {
+      console.log('🧠 Insights: esperando primer random cast antes de publicar.');
+      return;
+    }
+
+    const daysSinceRandom = (now - lastPostTime) / DAY_MS;
+    if (daysSinceRandom < INSIGHTS_OFFSET_DAYS) {
+      const remaining = (INSIGHTS_OFFSET_DAYS - daysSinceRandom).toFixed(1);
+      console.log(`🧠 Insights: faltan ~${remaining}d desde el último random cast.`);
+      return;
+    }
+
+    const state = loadState();
+    const lastInsightsMs = typeof state.last_insights_post_ms === 'number' ? state.last_insights_post_ms : 0;
+    const daysSinceInsights = (now - lastInsightsMs) / DAY_MS;
+    if (daysSinceInsights < 6) {
+      console.log(`🧠 Insights: ya posteado hace ~${daysSinceInsights.toFixed(1)}d, esperando.`);
+      return;
+    }
+
+    console.log(`🧠 Disparando weekly insights cast (mitad de intervalo, ${INSIGHTS_HOUR}:00 Bogotá)...`);
     runDailyInsightsCast(followedAccounts).catch(err => {
-      console.error('⚠️ Error generando daily insights cast:', err.response?.data?.message || err.message);
+      console.error('⚠️ Error generando insights cast:', err.response?.data?.message || err.message);
     });
   });
-  
+
+
   // 🌅 Mañana (9:00 AM) - Revisar cuenta aleatoria
   safeSchedule('0 9 * * *', () => {
     if (NEYNAR_API_KEY) {

@@ -51,11 +51,13 @@ MAX_CASTS_REVIEW_PER_ACCOUNT=0
 CASTS_PAGE_SIZE=50
 ACTION_DELAY_MS=3000
 
-# 🧠 Daily Insights (OPTIONAL)
+# 🧠 Weekly Insights (OPTIONAL)
+# Insights cast publishes ~3 days after the random cast at a fixed hour.
 INSIGHTS_ENABLED=0
-INSIGHTS_DAYS=1
+INSIGHTS_DAYS=7
 INSIGHTS_STORE_DAYS=30
-INSIGHTS_POST_CRON=30 8 * * *
+INSIGHTS_OFFSET_DAYS=3
+INSIGHTS_HOUR=8
 
 # 🚀 Startup Post (OPTIONAL)
 STARTUP_TEST_POST=1
@@ -109,21 +111,24 @@ Visit their Warpcast profile and check the URL or use tools like [fid.info](http
 | `CASTS_PAGE_SIZE` | `50` | Number of casts to fetch per API page |
 | `ACTION_DELAY_MS` | `3000` | Delay between actions in milliseconds (3 seconds) |
 
-#### Daily Insights (Optional)
+#### Weekly Insights (Optional)
+
+The insights cast publishes ~3 days after the random cast at a fixed hour, so the two never fall on the same day.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `INSIGHTS_ENABLED` | `0` | If `1`, posts a daily "topics pulse" based on followed accounts |
-| `INSIGHTS_DAYS` | `1` | How many days of casts to summarize into the daily insights cast |
+| `INSIGHTS_ENABLED` | `0` | If `1`, posts a weekly "topics pulse" based on followed accounts |
+| `INSIGHTS_DAYS` | `7` | How many days of casts to summarize into the weekly insights cast |
 | `INSIGHTS_STORE_DAYS` | `30` | How many days to keep in the local insights cache |
-| `INSIGHTS_POST_CRON` | `30 8 * * *` | Cron string for the insights post time (8:30 AM Bogota timezone) |
+| `INSIGHTS_OFFSET_DAYS` | `3` | Days to wait after the last random cast before publishing insights (~mid-week) |
+| `INSIGHTS_HOUR` | `8` | Fixed hour (0-23, Bogotá) at which the insights cast publishes |
 
 #### Startup Options (Optional)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `STARTUP_TEST_POST` | `1` | If `1`, posts one cast on startup (respects 24h gate) |
-| `FORCE_STARTUP_TEST_POST` | `0` | If `1`, forces a startup cast even if last cast was <24h ago |
+| `STARTUP_TEST_POST` | `1` | If `1`, posts one cast on startup (respects 7-day gate) |
+| `FORCE_STARTUP_TEST_POST` | `0` | If `1`, forces a startup cast even if last cast was <7 days ago |
 
 ## 📖 Usage
 
@@ -136,7 +141,7 @@ npm start
 The agent will:
 
 - ✅ Run continuously 24/7
-- ✅ Post one cast every 24 hours at a random time
+- ✅ Post one cast every 7 days at a random time
 - ✅ Auto-engage with community accounts 3 times daily (9 AM, 3 PM, 9 PM)
 - ✅ Test auto-engagement immediately on startup
 - ✅ Archive logs monthly
@@ -146,9 +151,9 @@ The agent will:
 
 ### Cast Posting
 
-- **Frequency**: Once every 24 hours
+- **Frequency**: Once every 7 days
 - **Timing**: Random hour (0-23)
-- **Logic**: After 24h pass, enters random posting window with 1/8 chance per hour
+- **Logic**: After 7 days pass, enters random posting window with 1/4 chance per hour
 - **Message Selection**: Based on hour (morning/noon/evening)
 
 ### Auto-Engagement
@@ -216,8 +221,8 @@ fc_agent/
    - Run auto-engagement immediately (test mode)
 
 2. **Every Hour**:
-   - Check if 24h passed since last cast
-   - If yes, randomly decide to post (1/8 chance)
+   - Check if 7 days passed since last cast
+   - If yes, randomly decide to post (1/4 chance)
    - Select message based on current hour
    - Publish cast via Neynar API
    - Update history and log
@@ -306,7 +311,7 @@ This project is designed to run continuously on [Railway](https://railway.app/):
 
 ```text
 🤖 Agente de Farcaster activo.
-📅 Casts: 1 vez cada 24 horas a una hora aleatoria
+📅 Casts: 1 vez cada 7 días a una hora aleatoria
 💚 Auto-engagement: 3 veces al día (9 AM, 3 PM, 9 PM) con cuentas rotativas
 🗓️ Archivado: Fin de cada mes a las 23:59 (hora Bogotá)
 🟣 Usando Neynar API para Warpcast/Farcaster
